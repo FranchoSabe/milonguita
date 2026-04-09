@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 98%;
+    --foreground: 0 0% 9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 9%;
+    --primary: 24 95% 53%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 96%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 0 0% 96%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 90%;
+    --input: 0 0% 90%;
+    --ring: 24 95% 53%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Print styles for 80mm ticket */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #ticket-print,
+  #ticket-print * {
+    visibility: visible;
+  }
+  #ticket-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 80mm;
+    padding: 5mm;
+    font-size: 12px;
+    font-family: "Courier New", monospace;
+  }
+  #ticket-print .ticket-header {
+    text-align: center;
+    border-bottom: 1px dashed #000;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+  }
+  #ticket-print .ticket-items {
+    border-bottom: 1px dashed #000;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+  }
+  #ticket-print .ticket-item {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  #ticket-print .ticket-totals {
+    margin-top: 8px;
+  }
+  #ticket-print .ticket-total-line {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 2px;
+  }
+  #ticket-print .ticket-total-final {
+    font-weight: bold;
+    font-size: 14px;
+    border-top: 1px dashed #000;
+    padding-top: 4px;
+    margin-top: 4px;
+  }
+  #ticket-print .ticket-footer {
+    text-align: center;
+    margin-top: 12px;
+    font-size: 10px;
+  }
+}
