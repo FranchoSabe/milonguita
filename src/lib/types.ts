@@ -3,7 +3,64 @@ export interface Product {
   name: string;
   price: number;
   category: string | null;
+  description: string | null;
+  points: number;
+  stock: number;
+  stock_enabled: boolean;
+  display_order: number;
   active: boolean;
+  created_at: string;
+}
+
+export type OptionGroupSelectionType = "single" | "multi";
+
+export interface ProductOptionGroup {
+  id: string;
+  product_id: string;
+  name: string;
+  selection_type: OptionGroupSelectionType;
+  required: boolean;
+  display_order: number;
+  created_at: string;
+  options?: ProductOption[];
+}
+
+export interface ProductOption {
+  id: string;
+  group_id: string;
+  name: string;
+  price_delta: number;
+  is_default: boolean;
+  display_order: number;
+  created_at: string;
+}
+
+export interface ProductWithOptions extends Product {
+  option_groups: ProductOptionGroup[];
+}
+
+export type StockMovementType = "ingress" | "adjustment" | "sale" | "correction";
+
+export interface StockMovement {
+  id: string;
+  product_id: string;
+  movement_type: StockMovementType;
+  quantity_delta: number;
+  reason: string | null;
+  sale_id: string | null;
+  balance_after: number | null;
+  created_at: string;
+}
+
+export interface DynamicPack {
+  id: string;
+  name: string;
+  price: number;
+  total_units: number;
+  category_filter: string;
+  points: number;
+  active: boolean;
+  display_order: number;
   created_at: string;
 }
 
@@ -23,12 +80,33 @@ export interface PromotionItem {
   quantity: number;
 }
 
+export interface SelectedOption {
+  group_id: string;
+  group_name: string;
+  option_id: string;
+  option_name: string;
+  price_delta: number;
+}
+
+export interface PackItem {
+  product_id: string;
+  name: string;
+  quantity: number;
+}
+
+export type CartItemType = "product" | "promotion" | "pack";
+
 export interface CartItem {
   id: string;
+  product_id: string | null;
   name: string;
   price: number;
+  base_price?: number;
   quantity: number;
-  type: "product" | "promotion";
+  type: CartItemType;
+  selected_options?: SelectedOption[];
+  pack_id?: string;
+  pack_items?: PackItem[];
 }
 
 export type PaymentMethod = "efectivo" | "qr" | "transferencia";
@@ -51,10 +129,15 @@ export interface Sale {
 }
 
 export interface SaleItem {
-  product_id: string;
+  product_id: string | null;
   name: string;
   price: number;
+  base_price?: number;
   quantity: number;
+  type?: CartItemType;
+  selected_options?: SelectedOption[];
+  pack_id?: string;
+  pack_items?: PackItem[];
 }
 
 export interface CashRegister {

@@ -21,31 +21,20 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import {
-  getAllProducts,
-  createProduct,
-  updateProduct,
   getAllPromotions,
   createPromotion,
   updatePromotion,
 } from "@/lib/queries";
-import { Product, Promotion } from "@/lib/types";
+import { Promotion } from "@/lib/types";
 import { formatCurrency, cn } from "@/lib/utils";
+import { ProductsManager } from "@/components/settings/products-manager";
 
 type Tab = "products" | "promotions" | "general";
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("products");
-  const [products, setProducts] = useState<Product[]>([]);
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // Product form
-  const [showProductDialog, setShowProductDialog] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [productName, setProductName] = useState("");
-  const [productPrice, setProductPrice] = useState("");
-  const [productCategory, setProductCategory] = useState("");
-  const [savingProduct, setSavingProduct] = useState(false);
 
   // Promotion form
   const [showPromoDialog, setShowPromoDialog] = useState(false);
@@ -60,11 +49,7 @@ export default function SettingsPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [prods, promos] = await Promise.all([
-        getAllProducts(),
-        getAllPromotions(),
-      ]);
-      setProducts(prods);
+      const promos = await getAllPromotions();
       setPromotions(promos);
     } catch (err) {
       console.error("Error loading settings:", err);
@@ -77,59 +62,6 @@ export default function SettingsPage() {
     loadData();
     setStoreName(localStorage.getItem("store_name") || "Mi Local");
   }, [loadData]);
-
-  // Product handlers
-  const openNewProduct = () => {
-    setEditingProduct(null);
-    setProductName("");
-    setProductPrice("");
-    setProductCategory("");
-    setShowProductDialog(true);
-  };
-
-  const openEditProduct = (product: Product) => {
-    setEditingProduct(product);
-    setProductName(product.name);
-    setProductPrice(product.price.toString());
-    setProductCategory(product.category || "");
-    setShowProductDialog(true);
-  };
-
-  const handleSaveProduct = async () => {
-    if (!productName || !productPrice) return;
-    setSavingProduct(true);
-    try {
-      if (editingProduct) {
-        await updateProduct(editingProduct.id, {
-          name: productName,
-          price: Number(productPrice),
-          category: productCategory || null,
-        });
-      } else {
-        await createProduct({
-          name: productName,
-          price: Number(productPrice),
-          category: productCategory || null,
-        });
-      }
-      setShowProductDialog(false);
-      await loadData();
-    } catch (err) {
-      console.error("Error saving product:", err);
-      alert("Error al guardar el producto.");
-    } finally {
-      setSavingProduct(false);
-    }
-  };
-
-  const handleToggleProduct = async (product: Product) => {
-    try {
-      await updateProduct(product.id, { active: !product.active });
-      await loadData();
-    } catch (err) {
-      console.error("Error toggling product:", err);
-    }
-  };
 
   // Promotion handlers
   const openNewPromo = () => {
@@ -185,7 +117,6 @@ export default function SettingsPage() {
     }
   };
 
-  // General handlers
   const handleSaveStoreName = () => {
     localStorage.setItem("store_name", storeName);
     alert("Nombre del local guardado.");
@@ -203,7 +134,6 @@ export default function SettingsPage() {
     <div className="p-4">
       <h1 className="mb-6 text-2xl font-bold">Configuración</h1>
 
-      {/* Tabs */}
       <div className="mb-6 flex gap-1 rounded-lg bg-gray-100 p-1">
         {[
           { key: "products" as Tab, label: "Productos", icon: Package },
@@ -226,121 +156,8 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {/* Products Tab */}
-      {tab === "products" && (
-        <div>
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Productos</h2>
-            <Button onClick={openNewProduct} size="sm">
-              <Plus className="mr-1 h-4 w-4" />
-              Agregar
-            </Button>
-          </div>
-          <div className="space-y-2">
-            {products.map((product) => (
-              <div
-                key={product.id}
-                className={cn(
-                  "flex items-center justify-between rounded-lg border bg-white p-4 shadow-sm",
-                  !product.active && "opacity-50"
-                )}
-              >
-                <div>
-                  <p className="font-medium">{product.name}</p>
-                  <p className="text-sm text-gray-500">
-                    {formatCurrency(product.price)}
-                    {product.category && ` · ${product.category}`}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => openEditProduct(product)}
-                    className="rounded-lg p-2 hover:bg-gray-100"
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => handleToggleProduct(product)}
-                    className="rounded-lg p-2 hover:bg-gray-100"
-                  >
-                    {product.active ? (
-                      <ToggleRight className="h-5 w-5 text-green-500" />
-                    ) : (
-                      <ToggleLeft className="h-5 w-5 text-gray-400" />
-                    )}
-                  </button>
-                </div>
-              </div>
-            ))}
-            {products.length === 0 && (
-              <p className="py-8 text-center text-gray-400">
-                No hay productos. Agregá uno para comenzar.
-              </p>
-            )}
-          </div>
+      {tab === "products" && <ProductsManager />}
 
-          {/* Product dialog */}
-          <Dialog
-            open={showProductDialog}
-            onOpenChange={setShowProductDialog}
-          >
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>
-                  {editingProduct ? "Editar Producto" : "Nuevo Producto"}
-                </DialogTitle>
-                <DialogDescription>
-                  {editingProduct
-                    ? "Modificá los datos del producto."
-                    : "Completá los datos del nuevo producto."}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="product-name">Nombre</Label>
-                  <Input
-                    id="product-name"
-                    value={productName}
-                    onChange={(e) => setProductName(e.target.value)}
-                    placeholder="Ej: Empanada de carne"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="product-price">Precio</Label>
-                  <Input
-                    id="product-price"
-                    type="number"
-                    min="0"
-                    value={productPrice}
-                    onChange={(e) => setProductPrice(e.target.value)}
-                    placeholder="Ej: 800"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="product-category">
-                    Categoría (opcional)
-                  </Label>
-                  <Input
-                    id="product-category"
-                    value={productCategory}
-                    onChange={(e) => setProductCategory(e.target.value)}
-                    placeholder="Ej: Empanadas"
-                  />
-                </div>
-                <Button
-                  onClick={handleSaveProduct}
-                  disabled={savingProduct || !productName || !productPrice}
-                  className="w-full"
-                >
-                  {savingProduct ? "Guardando..." : "Guardar"}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </div>
-      )}
-
-      {/* Promotions Tab */}
       {tab === "promotions" && (
         <div>
           <div className="mb-4 flex items-center justify-between">
@@ -393,14 +210,11 @@ export default function SettingsPage() {
             )}
           </div>
 
-          {/* Promotion dialog */}
           <Dialog open={showPromoDialog} onOpenChange={setShowPromoDialog}>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>
-                  {editingPromo
-                    ? "Editar Promoción"
-                    : "Nueva Promoción"}
+                  {editingPromo ? "Editar Promoción" : "Nueva Promoción"}
                 </DialogTitle>
                 <DialogDescription>
                   {editingPromo
@@ -453,7 +267,6 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* General Tab */}
       {tab === "general" && (
         <div className="max-w-md">
           <h2 className="mb-4 text-lg font-semibold">General</h2>

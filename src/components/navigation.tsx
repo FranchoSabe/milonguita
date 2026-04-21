@@ -2,12 +2,19 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ShoppingCart, BarChart3, Settings, LogOut } from "lucide-react";
+import {
+  ShoppingCart,
+  BarChart3,
+  Settings,
+  LogOut,
+  Package,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 
 const navItems = [
   { href: "/", label: "Venta", icon: ShoppingCart },
+  { href: "/stock", label: "Stock", icon: Package },
   { href: "/reports", label: "Reportes", icon: BarChart3 },
   { href: "/settings", label: "Config", icon: Settings },
 ];

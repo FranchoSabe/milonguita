@@ -1,12 +1,30 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { X, Plus, Minus, Trash2, Printer, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TicketPreview, Ticket } from "./ticket";
-import { getActiveProducts, getActivePromotions, createSale } from "@/lib/queries";
-import { Product, Promotion, CartItem, Sale } from "@/lib/types";
+import { VariantPicker } from "./variant-picker";
+import { PackBuilder } from "./pack-builder";
+import {
+  getProductsWithOptions,
+  getActivePromotions,
+  getActiveDynamicPacks,
+  getAllProducts,
+  createSale,
+} from "@/lib/queries";
+import {
+  ProductWithOptions,
+  Product,
+  Promotion,
+  DynamicPack,
+  PackItem,
+  CartItem,
+  Sale,
+  SelectedOption,
+  PaymentMethod,
+} from "@/lib/types";
 import { formatCurrency, cn } from "@/lib/utils";
 
 type Step = "products" | "summary" | "success";
@@ -17,31 +35,72 @@ interface SaleModalProps {
   onSaleComplete: () => void;
 }
 
+function buildCartItemId(
+  productId: string,
+  selectedOptions: SelectedOption[]
+): string {
+  if (selectedOptions.length === 0) return productId;
+  const key = selectedOptions
+    .map((o) => o.option_id)
+    .sort()
+    .join("-");
+  return `${productId}|${key}`;
+}
+
+function buildCartItemName(
+  productName: string,
+  selectedOptions: SelectedOption[]
+): string {
+  if (selectedOptions.length === 0) return productName;
+  const variant = selectedOptions.map((o) => o.option_name).join(", ");
+  return `${productName} (${variant})`;
+}
+
+function buildPackCartId(packId: string, items: PackItem[]): string {
+  const key = items
+    .slice()
+    .sort((a, b) => a.product_id.localeCompare(b.product_id))
+    .map((i) => `${i.product_id}x${i.quantity}`)
+    .join("-");
+  return `pack:${packId}|${key}`;
+}
+
 export function SaleModal({
   cashRegisterId,
   onClose,
   onSaleComplete,
 }: SaleModalProps) {
   const [step, setStep] = useState<Step>("products");
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<ProductWithOptions[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [promotions, setPromotions] = useState<Promotion[]>([]);
+  const [packs, setPacks] = useState<DynamicPack[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discount, setDiscount] = useState(0);
-  const [paymentMethod, setPaymentMethod] = useState<string>("efectivo");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("efectivo");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [completedSale, setCompletedSale] = useState<Sale | null>(null);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [variantPickerProduct, setVariantPickerProduct] =
+    useState<ProductWithOptions | null>(null);
+  const [packPickerPack, setPackPickerPack] = useState<DynamicPack | null>(
+    null
+  );
 
   useEffect(() => {
     async function load() {
       try {
-        const [prods, promos] = await Promise.all([
-          getActiveProducts(),
+        const [prods, allProds, promos, dpacks] = await Promise.all([
+          getProductsWithOptions({ activeOnly: true }),
+          getAllProducts(),
           getActivePromotions(),
+          getActiveDynamicPacks(),
         ]);
         setProducts(prods);
+        setAllProducts(allProds);
         setPromotions(promos);
+        setPacks(dpacks);
       } catch (err) {
         console.error("Error loading products:", err);
       } finally {
@@ -51,45 +110,122 @@ export function SaleModal({
     load();
   }, []);
 
-  const categories = Array.from(
-    new Set(products.map((p) => p.category || "Sin categoría"))
+  const categories = useMemo(
+    () =>
+      Array.from(
+        new Set(products.map((p) => p.category || "Sin categoría"))
+      ),
+    [products]
   );
 
-  const filteredProducts = activeCategory
-    ? products.filter((p) => (p.category || "Sin categoría") === activeCategory)
-    : products;
+  const filteredProducts = useMemo(
+    () =>
+      activeCategory
+        ? products.filter(
+            (p) => (p.category || "Sin categoría") === activeCategory
+          )
+        : products,
+    [products, activeCategory]
+  );
 
-  const addToCart = (item: { id: string; name: string; price: number; type: "product" | "promotion" }) => {
-    setCart((prev) => {
-      const existing = prev.find((c) => c.id === item.id && c.type === item.type);
-      if (existing) {
-        return prev.map((c) =>
-          c.id === item.id && c.type === item.type
-            ? { ...c, quantity: c.quantity + 1 }
-            : c
-        );
-      }
-      return [...prev, { ...item, quantity: 1 }];
+  const addSimpleProduct = (product: ProductWithOptions) => {
+    pushItem({
+      id: product.id,
+      product_id: product.id,
+      name: product.name,
+      price: product.price,
+      base_price: product.price,
+      quantity: 1,
+      type: "product",
     });
   };
 
-  const updateQuantity = (id: string, type: string, delta: number) => {
+  const addProductWithVariants = (
+    product: ProductWithOptions,
+    selected: SelectedOption[]
+  ) => {
+    const extra = selected.reduce((s, o) => s + o.price_delta, 0);
+    pushItem({
+      id: buildCartItemId(product.id, selected),
+      product_id: product.id,
+      name: buildCartItemName(product.name, selected),
+      price: product.price + extra,
+      base_price: product.price,
+      quantity: 1,
+      type: "product",
+      selected_options: selected,
+    });
+    setVariantPickerProduct(null);
+  };
+
+  const addPromotion = (promo: Promotion) => {
+    pushItem({
+      id: `promo:${promo.id}`,
+      product_id: null,
+      name: promo.name,
+      price: promo.price,
+      quantity: 1,
+      type: "promotion",
+      pack_items: promo.items.map((i) => ({
+        product_id: i.product_id,
+        name: i.name,
+        quantity: i.quantity,
+      })),
+    });
+  };
+
+  const addPack = (pack: DynamicPack, items: PackItem[]) => {
+    pushItem({
+      id: buildPackCartId(pack.id, items),
+      product_id: null,
+      name: `${pack.name} (${items.map((i) => `${i.quantity}× ${i.name}`).join(", ")})`,
+      price: pack.price,
+      quantity: 1,
+      type: "pack",
+      pack_id: pack.id,
+      pack_items: items,
+    });
+    setPackPickerPack(null);
+  };
+
+  const pushItem = (item: CartItem) => {
+    setCart((prev) => {
+      const existing = prev.find((c) => c.id === item.id);
+      if (existing) {
+        return prev.map((c) =>
+          c.id === item.id ? { ...c, quantity: c.quantity + item.quantity } : c
+        );
+      }
+      return [...prev, item];
+    });
+  };
+
+  const handleSelectProduct = (product: ProductWithOptions) => {
+    if (product.option_groups.length > 0) {
+      setVariantPickerProduct(product);
+    } else {
+      addSimpleProduct(product);
+    }
+  };
+
+  const updateQuantity = (id: string, delta: number) => {
     setCart((prev) =>
       prev
         .map((c) =>
-          c.id === id && c.type === type
-            ? { ...c, quantity: c.quantity + delta }
-            : c
+          c.id === id ? { ...c, quantity: c.quantity + delta } : c
         )
         .filter((c) => c.quantity > 0)
     );
   };
 
-  const removeFromCart = (id: string, type: string) => {
-    setCart((prev) => prev.filter((c) => !(c.id === id && c.type === type)));
+  const removeFromCart = (id: string) => {
+    setCart((prev) => prev.filter((c) => c.id !== id));
   };
 
-  const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const subtotal = cart.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
   const total = Math.max(0, subtotal - discount);
 
   const handleConfirmSale = async () => {
@@ -131,7 +267,6 @@ export function SaleModal({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-white">
-      {/* Header */}
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h2 className="text-xl font-bold">
           {step === "products" && "Nueva Venta"}
@@ -146,12 +281,9 @@ export function SaleModal({
         </button>
       </div>
 
-      {/* Content */}
       {step === "products" && (
         <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
-          {/* Product selection */}
           <div className="flex-1 overflow-y-auto p-4">
-            {/* Category filters */}
             {categories.length > 1 && (
               <div className="mb-4 flex flex-wrap gap-2">
                 <button
@@ -182,30 +314,51 @@ export function SaleModal({
               </div>
             )}
 
-            {/* Products grid */}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
               {filteredProducts.map((product) => (
                 <button
                   key={product.id}
-                  onClick={() =>
-                    addToCart({
-                      id: product.id,
-                      name: product.name,
-                      price: product.price,
-                      type: "product",
-                    })
-                  }
+                  onClick={() => handleSelectProduct(product)}
                   className="flex flex-col items-center justify-center rounded-xl border-2 border-gray-200 bg-white p-4 text-center shadow-sm transition-all hover:border-primary hover:shadow-md active:scale-95"
                 >
                   <span className="text-sm font-semibold">{product.name}</span>
                   <span className="mt-1 text-lg font-bold text-primary">
                     {formatCurrency(product.price)}
                   </span>
+                  {product.option_groups.length > 0 && (
+                    <span className="mt-0.5 text-[10px] text-gray-400">
+                      Con opciones
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
 
-            {/* Promotions */}
+            {packs.length > 0 && (
+              <>
+                <h3 className="mb-3 mt-6 text-lg font-bold text-primary">
+                  Packs
+                </h3>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                  {packs.map((pack) => (
+                    <button
+                      key={pack.id}
+                      onClick={() => setPackPickerPack(pack)}
+                      className="flex flex-col items-center justify-center rounded-xl border-2 border-blue-200 bg-blue-50 p-4 text-center shadow-sm transition-all hover:border-primary hover:shadow-md active:scale-95"
+                    >
+                      <span className="text-sm font-semibold">{pack.name}</span>
+                      <span className="mt-0.5 text-xs text-gray-500">
+                        {pack.total_units} unidades · {pack.category_filter}
+                      </span>
+                      <span className="mt-1 text-lg font-bold text-primary">
+                        {formatCurrency(pack.price)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
             {promotions.length > 0 && (
               <>
                 <h3 className="mb-3 mt-6 text-lg font-bold text-primary">
@@ -215,14 +368,7 @@ export function SaleModal({
                   {promotions.map((promo) => (
                     <button
                       key={promo.id}
-                      onClick={() =>
-                        addToCart({
-                          id: promo.id,
-                          name: promo.name,
-                          price: promo.price,
-                          type: "promotion",
-                        })
-                      }
+                      onClick={() => addPromotion(promo)}
                       className="flex flex-col items-center justify-center rounded-xl border-2 border-orange-200 bg-orange-50 p-4 text-center shadow-sm transition-all hover:border-primary hover:shadow-md active:scale-95"
                     >
                       <span className="text-sm font-semibold">
@@ -243,7 +389,6 @@ export function SaleModal({
             )}
           </div>
 
-          {/* Cart sidebar */}
           <div className="flex w-full flex-col border-t bg-gray-50 lg:w-96 lg:border-l lg:border-t-0">
             <div className="flex-1 overflow-y-auto p-4">
               <h3 className="mb-3 font-bold">
@@ -257,38 +402,34 @@ export function SaleModal({
                 <div className="space-y-2">
                   {cart.map((item) => (
                     <div
-                      key={`${item.type}-${item.id}`}
-                      className="flex items-center justify-between rounded-lg bg-white p-3 shadow-sm"
+                      key={item.id}
+                      className="flex items-start justify-between rounded-lg bg-white p-3 shadow-sm"
                     >
-                      <div className="flex-1">
+                      <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium">{item.name}</p>
                         <p className="text-xs text-gray-500">
                           {formatCurrency(item.price)} c/u
                         </p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="ml-2 flex items-center gap-1.5">
                         <button
-                          onClick={() =>
-                            updateQuantity(item.id, item.type, -1)
-                          }
+                          onClick={() => updateQuantity(item.id, -1)}
                           className="rounded-full bg-gray-100 p-1.5 hover:bg-gray-200"
                         >
                           <Minus className="h-4 w-4" />
                         </button>
-                        <span className="w-8 text-center font-bold">
+                        <span className="w-6 text-center font-bold">
                           {item.quantity}
                         </span>
                         <button
-                          onClick={() =>
-                            updateQuantity(item.id, item.type, 1)
-                          }
+                          onClick={() => updateQuantity(item.id, 1)}
                           className="rounded-full bg-gray-100 p-1.5 hover:bg-gray-200"
                         >
                           <Plus className="h-4 w-4" />
                         </button>
                         <button
-                          onClick={() => removeFromCart(item.id, item.type)}
-                          className="ml-1 rounded-full p-1.5 text-red-500 hover:bg-red-50"
+                          onClick={() => removeFromCart(item.id)}
+                          className="ml-0.5 rounded-full p-1.5 text-red-500 hover:bg-red-50"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -299,7 +440,6 @@ export function SaleModal({
               )}
             </div>
 
-            {/* Cart footer */}
             <div className="border-t bg-white p-4">
               <div className="mb-2 flex justify-between text-lg font-bold">
                 <span>Subtotal:</span>
@@ -322,13 +462,12 @@ export function SaleModal({
       {step === "summary" && (
         <div className="flex-1 overflow-y-auto p-4">
           <div className="mx-auto max-w-md space-y-6">
-            {/* Items summary */}
             <div>
               <h3 className="mb-2 font-bold">Resumen</h3>
               <div className="space-y-2 rounded-lg border p-3">
                 {cart.map((item) => (
                   <div
-                    key={`${item.type}-${item.id}`}
+                    key={item.id}
                     className="flex justify-between text-sm"
                   >
                     <span>
@@ -342,7 +481,6 @@ export function SaleModal({
               </div>
             </div>
 
-            {/* Discount */}
             <div>
               <h3 className="mb-2 font-bold">Descuento</h3>
               <div className="flex items-center gap-2">
@@ -360,15 +498,16 @@ export function SaleModal({
               </div>
             </div>
 
-            {/* Payment method */}
             <div>
               <h3 className="mb-2 font-bold">Método de pago</h3>
               <div className="grid grid-cols-3 gap-3">
-                {[
-                  { value: "efectivo", label: "Efectivo" },
-                  { value: "qr", label: "QR" },
-                  { value: "transferencia", label: "Transferencia" },
-                ].map((method) => (
+                {(
+                  [
+                    { value: "efectivo", label: "Efectivo" },
+                    { value: "qr", label: "QR" },
+                    { value: "transferencia", label: "Transferencia" },
+                  ] as { value: PaymentMethod; label: string }[]
+                ).map((method) => (
                   <button
                     key={method.value}
                     onClick={() => setPaymentMethod(method.value)}
@@ -385,7 +524,6 @@ export function SaleModal({
               </div>
             </div>
 
-            {/* Totals */}
             <div className="rounded-lg bg-gray-50 p-4">
               <div className="flex justify-between text-sm">
                 <span>Subtotal:</span>
@@ -403,7 +541,6 @@ export function SaleModal({
               </div>
             </div>
 
-            {/* Actions */}
             <div className="flex gap-3">
               <Button
                 variant="outline"
@@ -446,10 +583,22 @@ export function SaleModal({
             </Button>
           </div>
 
-          {/* Hidden print ticket */}
           <Ticket sale={completedSale} />
         </div>
       )}
+
+      <VariantPicker
+        product={variantPickerProduct}
+        onAdd={addProductWithVariants}
+        onClose={() => setVariantPickerProduct(null)}
+      />
+
+      <PackBuilder
+        pack={packPickerPack}
+        allProducts={allProducts}
+        onAdd={addPack}
+        onClose={() => setPackPickerPack(null)}
+      />
     </div>
   );
 }
