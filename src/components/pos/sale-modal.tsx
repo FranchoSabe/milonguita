@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { TicketPreview, Ticket } from "./ticket";
 import { VariantPicker } from "./variant-picker";
 import { PackBuilder } from "./pack-builder";
+import { CustomerPicker } from "./customer-picker";
 import {
   getProductsWithOptions,
   getActivePromotions,
@@ -24,7 +25,13 @@ import {
   Sale,
   SelectedOption,
   PaymentMethod,
+  Customer,
 } from "@/lib/types";
+import {
+  computePointsEarned,
+  getPointsConversionRate,
+  pointsToCurrency,
+} from "@/lib/points";
 import { formatCurrency, cn } from "@/lib/utils";
 
 type Step = "products" | "summary" | "success";
@@ -87,6 +94,13 @@ export function SaleModal({
   const [packPickerPack, setPackPickerPack] = useState<DynamicPack | null>(
     null
   );
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [redeemPoints, setRedeemPoints] = useState(0);
+  const [pointsRate, setPointsRate] = useState(10);
+
+  useEffect(() => {
+    setPointsRate(getPointsConversionRate());
+  }, []);
 
   useEffect(() => {
     async function load() {
@@ -226,7 +240,40 @@ export function SaleModal({
     (sum, item) => sum + item.price * item.quantity,
     0
   );
-  const total = Math.max(0, subtotal - discount);
+
+  const productPointsMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of allProducts) {
+      map.set(p.id, p.points ?? 0);
+    }
+    return map;
+  }, [allProducts]);
+
+  const pointsEarned = useMemo(
+    () => computePointsEarned(cart, productPointsMap),
+    [cart, productPointsMap]
+  );
+
+  const redeemAmount = pointsToCurrency(redeemPoints);
+  const totalDiscount = discount + redeemAmount;
+  const total = Math.max(0, subtotal - totalDiscount);
+  const maxRedeemByBalance = customer?.points_balance ?? 0;
+  const maxRedeemByTotal = pointsRate > 0
+    ? Math.floor(Math.max(0, subtotal - discount) / pointsRate)
+    : 0;
+  const maxRedeem = Math.min(maxRedeemByBalance, maxRedeemByTotal);
+
+  // Clamp redeem points if it exceeds the customer's balance or the bill.
+  useEffect(() => {
+    if (redeemPoints > maxRedeem) {
+      setRedeemPoints(maxRedeem);
+    }
+  }, [redeemPoints, maxRedeem]);
+
+  // Reset redemption when the customer changes.
+  useEffect(() => {
+    setRedeemPoints(0);
+  }, [customer?.id]);
 
   const handleConfirmSale = async () => {
     if (cart.length === 0) return;
@@ -235,10 +282,13 @@ export function SaleModal({
       const sale = await createSale({
         items: cart,
         subtotal,
-        discount,
+        discount: totalDiscount,
         total,
         payment_method: paymentMethod,
         cash_register_id: cashRegisterId,
+        customer_id: customer?.id ?? null,
+        points_earned: customer ? pointsEarned : 0,
+        points_redeemed: customer ? redeemPoints : 0,
       });
       setCompletedSale(sale);
       setStep("success");
@@ -482,7 +532,56 @@ export function SaleModal({
             </div>
 
             <div>
-              <h3 className="mb-2 font-bold">Descuento</h3>
+              <h3 className="mb-2 font-bold">Cliente (opcional)</h3>
+              <CustomerPicker selected={customer} onSelect={setCustomer} />
+              {customer && (
+                <p className="mt-2 text-xs text-gray-500">
+                  Va a sumar{" "}
+                  <span className="font-semibold text-green-600">
+                    {pointsEarned.toLocaleString("es-AR")} pts
+                  </span>{" "}
+                  con esta venta.
+                </p>
+              )}
+            </div>
+
+            {customer && maxRedeem > 0 && (
+              <div>
+                <h3 className="mb-2 font-bold">Canjear puntos</h3>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min="0"
+                    max={maxRedeem}
+                    step="1"
+                    value={redeemPoints || ""}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      if (Number.isNaN(n)) {
+                        setRedeemPoints(0);
+                      } else {
+                        setRedeemPoints(
+                          Math.max(0, Math.min(maxRedeem, Math.floor(n)))
+                        );
+                      }
+                    }}
+                    placeholder="0"
+                    className="text-lg"
+                  />
+                  <span className="whitespace-nowrap text-sm text-gray-500">
+                    = {formatCurrency(redeemAmount)}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  Saldo disponible:{" "}
+                  {customer.points_balance.toLocaleString("es-AR")} pts · 1 pt ={" "}
+                  {formatCurrency(pointsRate)} · máx canjeable: {maxRedeem}
+                </p>
+              </div>
+            )}
+
+            <div>
+              <h3 className="mb-2 font-bold">Descuento manual</h3>
               <div className="flex items-center gap-2">
                 <span className="text-lg">$</span>
                 <Input
@@ -535,10 +634,22 @@ export function SaleModal({
                   <span>-{formatCurrency(discount)}</span>
                 </div>
               )}
+              {redeemAmount > 0 && (
+                <div className="flex justify-between text-sm text-amber-600">
+                  <span>Canje ({redeemPoints} pts):</span>
+                  <span>-{formatCurrency(redeemAmount)}</span>
+                </div>
+              )}
               <div className="mt-2 flex justify-between border-t pt-2 text-xl font-bold">
                 <span>Total:</span>
                 <span>{formatCurrency(total)}</span>
               </div>
+              {customer && pointsEarned > 0 && (
+                <div className="mt-1 flex justify-between text-xs text-green-600">
+                  <span>Puntos a ganar:</span>
+                  <span>+{pointsEarned}</span>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-3">

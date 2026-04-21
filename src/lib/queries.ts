@@ -13,6 +13,9 @@ import {
   CashRegister,
   CartItem,
   PaymentMethod,
+  Customer,
+  CustomerPointsHistory,
+  PointsMovementType,
 } from "./types";
 
 // ============================================
@@ -508,6 +511,9 @@ export async function createSale(sale: {
   total: number;
   payment_method: PaymentMethod;
   cash_register_id: string;
+  customer_id?: string | null;
+  points_earned?: number;
+  points_redeemed?: number;
 }): Promise<Sale> {
   const saleItems = sale.items.map(cartItemToSaleItem);
 
@@ -520,6 +526,9 @@ export async function createSale(sale: {
       total: sale.total,
       payment_method: sale.payment_method,
       cash_register_id: sale.cash_register_id,
+      customer_id: sale.customer_id ?? null,
+      points_earned: sale.points_earned ?? 0,
+      points_redeemed: sale.points_redeemed ?? 0,
     })
     .select()
     .single();
@@ -564,7 +573,157 @@ export async function createSale(sale: {
     console.error("Stock deduction failed for sale", data.id, err);
   }
 
+  // Apply loyalty side-effects (customer totals + points) in a best-effort pass.
+  if (sale.customer_id) {
+    try {
+      await supabase.rpc("register_sale_for_customer", {
+        p_customer_id: sale.customer_id,
+        p_sale_id: data.id,
+        p_amount: sale.total,
+      });
+
+      if ((sale.points_earned ?? 0) > 0) {
+        await supabase.rpc("apply_points_movement", {
+          p_customer_id: sale.customer_id,
+          p_movement_type: "earn",
+          p_points_delta: sale.points_earned,
+          p_reason: `Venta ${data.id.slice(0, 8)}`,
+          p_sale_id: data.id,
+        });
+      }
+
+      if ((sale.points_redeemed ?? 0) > 0) {
+        await supabase.rpc("apply_points_movement", {
+          p_customer_id: sale.customer_id,
+          p_movement_type: "redeem",
+          p_points_delta: -sale.points_redeemed!,
+          p_reason: `Canje en venta ${data.id.slice(0, 8)}`,
+          p_sale_id: data.id,
+        });
+      }
+    } catch (err) {
+      console.error("Loyalty update failed for sale", data.id, err);
+    }
+  }
+
   return data;
+}
+
+// ============================================
+// Customers + loyalty
+// ============================================
+
+export async function getAllCustomers(): Promise<Customer[]> {
+  const { data, error } = await supabase
+    .from("customers")
+    .select("*")
+    .order("name", { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function searchCustomers(query: string): Promise<Customer[]> {
+  const term = query.trim();
+  if (!term) return getAllCustomers();
+  const pattern = `%${term}%`;
+  const { data, error } = await supabase
+    .from("customers")
+    .select("*")
+    .or(`name.ilike.${pattern},phone.ilike.${pattern},email.ilike.${pattern}`)
+    .order("name", { ascending: true })
+    .limit(50);
+  if (error) throw error;
+  return data || [];
+}
+
+export async function getCustomerById(id: string): Promise<Customer | null> {
+  const { data, error } = await supabase
+    .from("customers")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export type CustomerWriteInput = Partial<
+  Pick<Customer, "name" | "phone" | "email" | "notes">
+>;
+
+export async function createCustomer(
+  input: CustomerWriteInput & { name: string }
+): Promise<Customer> {
+  const { data, error } = await supabase
+    .from("customers")
+    .insert(input)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateCustomer(
+  id: string,
+  updates: CustomerWriteInput
+): Promise<Customer> {
+  const { data, error } = await supabase
+    .from("customers")
+    .update(updates)
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteCustomer(id: string): Promise<void> {
+  const { error } = await supabase.from("customers").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function getCustomerPointsHistory(
+  customerId: string,
+  limit = 100
+): Promise<CustomerPointsHistory[]> {
+  const { data, error } = await supabase
+    .from("customer_points_history")
+    .select("*")
+    .eq("customer_id", customerId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data || [];
+}
+
+export async function getCustomerSales(
+  customerId: string,
+  limit = 100
+): Promise<Sale[]> {
+  const { data, error } = await supabase
+    .from("sales")
+    .select("*")
+    .eq("customer_id", customerId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data || [];
+}
+
+export async function applyManualPointsAdjustment(input: {
+  customer_id: string;
+  points_delta: number;
+  reason?: string | null;
+}): Promise<CustomerPointsHistory> {
+  const movementType: PointsMovementType = "adjustment";
+  const { data, error } = await supabase.rpc("apply_points_movement", {
+    p_customer_id: input.customer_id,
+    p_movement_type: movementType,
+    p_points_delta: input.points_delta,
+    p_reason: input.reason ?? null,
+    p_sale_id: null,
+  });
+  if (error) throw error;
+  return Array.isArray(data) ? data[0] : data;
 }
 
 export async function getTodaySales(

@@ -28,6 +28,11 @@ import {
 import { Promotion } from "@/lib/types";
 import { formatCurrency, cn } from "@/lib/utils";
 import { ProductsManager } from "@/components/settings/products-manager";
+import {
+  DEFAULT_POINTS_CONVERSION_RATE,
+  getPointsConversionRate,
+  setPointsConversionRate,
+} from "@/lib/points";
 
 type Tab = "products" | "promotions" | "general";
 
@@ -46,6 +51,9 @@ export default function SettingsPage() {
 
   // General
   const [storeName, setStoreName] = useState("");
+  const [pointsRate, setPointsRate] = useState(
+    DEFAULT_POINTS_CONVERSION_RATE.toString()
+  );
 
   const loadData = useCallback(async () => {
     try {
@@ -61,6 +69,7 @@ export default function SettingsPage() {
   useEffect(() => {
     loadData();
     setStoreName(localStorage.getItem("store_name") || "Mi Local");
+    setPointsRate(getPointsConversionRate().toString());
   }, [loadData]);
 
   // Promotion handlers
@@ -120,6 +129,16 @@ export default function SettingsPage() {
   const handleSaveStoreName = () => {
     localStorage.setItem("store_name", storeName);
     alert("Nombre del local guardado.");
+  };
+
+  const handleSavePointsRate = () => {
+    const rate = Number(pointsRate);
+    if (!rate || rate <= 0 || Number.isNaN(rate)) {
+      alert("Ingresá un valor mayor a 0.");
+      return;
+    }
+    setPointsConversionRate(rate);
+    alert("Conversión de puntos guardada.");
   };
 
   if (loading) {
@@ -268,8 +287,9 @@ export default function SettingsPage() {
       )}
 
       {tab === "general" && (
-        <div className="max-w-md">
-          <h2 className="mb-4 text-lg font-semibold">General</h2>
+        <div className="max-w-md space-y-4">
+          <h2 className="text-lg font-semibold">General</h2>
+
           <div className="rounded-lg border bg-white p-4 shadow-sm">
             <div className="mb-4">
               <Label htmlFor="store-name">Nombre del local</Label>
@@ -284,6 +304,28 @@ export default function SettingsPage() {
               />
             </div>
             <Button onClick={handleSaveStoreName}>Guardar</Button>
+          </div>
+
+          <div className="rounded-lg border bg-white p-4 shadow-sm">
+            <div className="mb-4">
+              <Label htmlFor="points-rate">Valor de cada punto</Label>
+              <p className="mb-2 text-xs text-gray-500">
+                Cuánto vale 1 punto en pesos al canjearlo. Ej: 10 significa que
+                100 puntos = {formatCurrency(1000)}.
+              </p>
+              <div className="flex items-center gap-2">
+                <span className="text-lg">$</span>
+                <Input
+                  id="points-rate"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={pointsRate}
+                  onChange={(e) => setPointsRate(e.target.value)}
+                />
+              </div>
+            </div>
+            <Button onClick={handleSavePointsRate}>Guardar</Button>
           </div>
         </div>
       )}

@@ -126,6 +126,35 @@ export interface Sale {
   payment_method: PaymentMethod;
   created_at: string;
   cash_register_id: string;
+  customer_id: string | null;
+  points_earned: number;
+  points_redeemed: number;
+}
+
+export interface Customer {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  notes: string | null;
+  points_balance: number;
+  total_spent: number;
+  visits: number;
+  last_visit_at: string | null;
+  created_at: string;
+}
+
+export type PointsMovementType = "earn" | "redeem" | "adjustment";
+
+export interface CustomerPointsHistory {
+  id: string;
+  customer_id: string;
+  sale_id: string | null;
+  movement_type: PointsMovementType;
+  points_delta: number;
+  reason: string | null;
+  balance_after: number | null;
+  created_at: string;
 }
 
 export interface SaleItem {

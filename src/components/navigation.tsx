@@ -8,6 +8,8 @@ import {
   Settings,
   LogOut,
   Package,
+  Users,
+  Receipt,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
@@ -15,7 +17,9 @@ import { createClient } from "@/lib/supabase/client";
 const navItems = [
   { href: "/", label: "Venta", icon: ShoppingCart },
   { href: "/stock", label: "Stock", icon: Package },
-  { href: "/reports", label: "Reportes", icon: BarChart3 },
+  { href: "/customers", label: "Clientes", icon: Users },
+  { href: "/reports", label: "Caja", icon: Receipt },
+  { href: "/stats", label: "Stats", icon: BarChart3 },
   { href: "/settings", label: "Config", icon: Settings },
 ];
 
