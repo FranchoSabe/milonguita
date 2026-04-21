@@ -9,7 +9,7 @@ interface TicketProps {
 
 const paymentMethodLabels: Record<string, string> = {
   efectivo: "Efectivo",
-  tarjeta: "Tarjeta",
+  qr: "QR",
   transferencia: "Transferencia",
 };
 

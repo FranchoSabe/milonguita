@@ -51,7 +51,7 @@ create table sales (
   subtotal numeric not null default 0,
   discount numeric not null default 0,
   total numeric not null default 0,
-  payment_method text not null check (payment_method in ('efectivo', 'tarjeta', 'transferencia')),
+  payment_method text not null check (payment_method in ('efectivo', 'qr', 'transferencia')),
   created_at timestamp with time zone default now(),
   cash_register_id uuid references cash_registers(id)
 );
@@ -67,17 +67,21 @@ create index idx_cash_registers_status on cash_registers(status);
 
 -- ============================================
 -- Row Level Security (RLS)
--- Allow anonymous access for all operations
+-- Only authenticated users can read/write.
 -- ============================================
 alter table products enable row level security;
 alter table promotions enable row level security;
 alter table sales enable row level security;
 alter table cash_registers enable row level security;
 
-create policy "Allow all access to products" on products for all using (true) with check (true);
-create policy "Allow all access to promotions" on promotions for all using (true) with check (true);
-create policy "Allow all access to sales" on sales for all using (true) with check (true);
-create policy "Allow all access to cash_registers" on cash_registers for all using (true) with check (true);
+create policy "Authenticated full access to products" on products
+  for all to authenticated using (true) with check (true);
+create policy "Authenticated full access to promotions" on promotions
+  for all to authenticated using (true) with check (true);
+create policy "Authenticated full access to sales" on sales
+  for all to authenticated using (true) with check (true);
+create policy "Authenticated full access to cash_registers" on cash_registers
+  for all to authenticated using (true) with check (true);
 
 -- ============================================
 -- Sample data (optional - uncomment to use)

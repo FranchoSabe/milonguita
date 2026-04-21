@@ -31,13 +31,21 @@ export interface CartItem {
   type: "product" | "promotion";
 }
 
+export type PaymentMethod = "efectivo" | "qr" | "transferencia";
+
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  efectivo: "Efectivo",
+  qr: "QR / Mercado Pago",
+  transferencia: "Transferencia",
+};
+
 export interface Sale {
   id: string;
   items: SaleItem[];
   subtotal: number;
   discount: number;
   total: number;
-  payment_method: "efectivo" | "tarjeta" | "transferencia";
+  payment_method: PaymentMethod;
   created_at: string;
   cash_register_id: string;
 }

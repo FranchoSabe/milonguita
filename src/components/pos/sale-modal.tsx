@@ -366,7 +366,7 @@ export function SaleModal({
               <div className="grid grid-cols-3 gap-3">
                 {[
                   { value: "efectivo", label: "Efectivo" },
-                  { value: "tarjeta", label: "Tarjeta" },
+                  { value: "qr", label: "QR" },
                   { value: "transferencia", label: "Transferencia" },
                 ].map((method) => (
                   <button

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   DollarSign,
-  CreditCard,
+  QrCode,
   Banknote,
   ArrowRightLeft,
   Lock,
@@ -116,8 +116,8 @@ export default function ReportsPage() {
   const todayEfectivo = todaySales
     .filter((s) => s.payment_method === "efectivo")
     .reduce((sum, s) => sum + s.total, 0);
-  const todayTarjeta = todaySales
-    .filter((s) => s.payment_method === "tarjeta")
+  const todayQr = todaySales
+    .filter((s) => s.payment_method === "qr")
     .reduce((sum, s) => sum + s.total, 0);
   const todayTransferencia = todaySales
     .filter((s) => s.payment_method === "transferencia")
@@ -191,11 +191,11 @@ export default function ReportsPage() {
             </div>
             <div className="rounded-xl border bg-white p-4 shadow-sm">
               <div className="flex items-center gap-2 text-sm text-gray-500">
-                <CreditCard className="h-4 w-4" />
-                Tarjeta
+                <QrCode className="h-4 w-4" />
+                QR
               </div>
               <p className="mt-1 text-xl font-bold">
-                {formatCurrency(todayTarjeta)}
+                {formatCurrency(todayQr)}
               </p>
             </div>
             <div className="rounded-xl border bg-white p-4 shadow-sm">
