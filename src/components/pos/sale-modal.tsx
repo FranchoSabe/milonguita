@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { X, Plus, Minus, Trash2, Printer, CheckCircle2 } from "lucide-react";
+import {
+  X,
+  Plus,
+  Minus,
+  Trash2,
+  Printer,
+  CheckCircle2,
+  Search,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TicketPreview, Ticket } from "./ticket";
@@ -84,12 +92,16 @@ export function SaleModal({
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [packs, setPacks] = useState<DynamicPack[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [discount, setDiscount] = useState(0);
+  const [discountMode, setDiscountMode] = useState<"amount" | "percent">(
+    "amount"
+  );
+  const [discountInput, setDiscountInput] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("efectivo");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [completedSale, setCompletedSale] = useState<Sale | null>(null);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const [variantPickerProduct, setVariantPickerProduct] =
     useState<ProductWithOptions | null>(null);
   const [packPickerPack, setPackPickerPack] = useState<DynamicPack | null>(
@@ -133,15 +145,45 @@ export function SaleModal({
     [products]
   );
 
-  const filteredProducts = useMemo(
-    () =>
-      activeCategory
-        ? products.filter(
-            (p) => (p.category || "Sin categoría") === activeCategory
-          )
-        : products,
-    [products, activeCategory]
-  );
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const searching = normalizedQuery.length > 0;
+
+  const matchesQuery = (haystack: string | null | undefined): boolean => {
+    if (!searching) return true;
+    return (haystack ?? "").toLowerCase().includes(normalizedQuery);
+  };
+
+  const filteredProducts = useMemo(() => {
+    let result = products;
+    if (!searching && activeCategory) {
+      result = result.filter(
+        (p) => (p.category || "Sin categoría") === activeCategory
+      );
+    }
+    if (searching) {
+      result = result.filter(
+        (p) => matchesQuery(p.name) || matchesQuery(p.description)
+      );
+    }
+    return result;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products, activeCategory, normalizedQuery]);
+
+  const filteredPacks = useMemo(() => {
+    if (!searching) return packs;
+    return packs.filter(
+      (p) => matchesQuery(p.name) || matchesQuery(p.category_filter)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [packs, normalizedQuery]);
+
+  const filteredPromotions = useMemo(() => {
+    if (!searching) return promotions;
+    return promotions.filter(
+      (p) => matchesQuery(p.name) || matchesQuery(p.description)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [promotions, normalizedQuery]);
 
   const addSimpleProduct = (product: ProductWithOptions) => {
     pushItem({
@@ -255,6 +297,15 @@ export function SaleModal({
     [cart, productPointsMap]
   );
 
+  const discountValueRaw = Number(discountInput) || 0;
+  const discount = useMemo(() => {
+    if (discountMode === "percent") {
+      const clamped = Math.max(0, Math.min(100, discountValueRaw));
+      return Math.round((subtotal * clamped) / 100);
+    }
+    return Math.max(0, Math.round(discountValueRaw));
+  }, [discountMode, discountValueRaw, subtotal]);
+
   const redeemAmount = pointsToCurrency(redeemPoints);
   const totalDiscount = discount + redeemAmount;
   const total = Math.max(0, subtotal - totalDiscount);
@@ -347,63 +398,98 @@ export function SaleModal({
       {step === "products" && (
         <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
           <div className="flex-1 overflow-y-auto p-4">
-            {categories.length > 1 && (
-              <div className="mb-4 flex flex-wrap gap-2">
-                <button
-                  onClick={() => setActiveCategory(null)}
-                  className={cn(
-                    "rounded-full px-4 py-2 text-sm font-medium transition-colors",
-                    activeCategory === null
-                      ? "bg-primary text-white"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  )}
-                >
-                  Todos
-                </button>
-                {categories.map((cat) => (
+            <div className="mb-4 space-y-3">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Buscar producto, pack o promoción…"
+                  className="pl-9 pr-9"
+                />
+                {searchQuery && (
                   <button
-                    key={cat}
-                    onClick={() => setActiveCategory(cat)}
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-gray-400 hover:bg-gray-100"
+                    aria-label="Limpiar búsqueda"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+
+              {!searching && categories.length > 1 && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setActiveCategory(null)}
                     className={cn(
                       "rounded-full px-4 py-2 text-sm font-medium transition-colors",
-                      activeCategory === cat
+                      activeCategory === null
                         ? "bg-primary text-white"
                         : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                     )}
                   >
-                    {cat}
+                    Todos
+                  </button>
+                  {categories.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setActiveCategory(cat)}
+                      className={cn(
+                        "rounded-full px-4 py-2 text-sm font-medium transition-colors",
+                        activeCategory === cat
+                          ? "bg-primary text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      )}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {searching &&
+              filteredProducts.length === 0 &&
+              filteredPacks.length === 0 &&
+              filteredPromotions.length === 0 && (
+                <p className="py-8 text-center text-sm text-gray-400">
+                  Sin resultados para &ldquo;{searchQuery}&rdquo;.
+                </p>
+              )}
+
+            {filteredProducts.length > 0 && (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {filteredProducts.map((product) => (
+                  <button
+                    key={product.id}
+                    onClick={() => handleSelectProduct(product)}
+                    className="flex flex-col items-center justify-center rounded-xl border-2 border-gray-200 bg-white p-4 text-center shadow-sm transition-all hover:border-primary hover:shadow-md active:scale-95"
+                  >
+                    <span className="text-sm font-semibold">
+                      {product.name}
+                    </span>
+                    <span className="mt-1 text-lg font-bold text-primary">
+                      {formatCurrency(product.price)}
+                    </span>
+                    {product.option_groups.length > 0 && (
+                      <span className="mt-0.5 text-[10px] text-gray-400">
+                        Con opciones
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-              {filteredProducts.map((product) => (
-                <button
-                  key={product.id}
-                  onClick={() => handleSelectProduct(product)}
-                  className="flex flex-col items-center justify-center rounded-xl border-2 border-gray-200 bg-white p-4 text-center shadow-sm transition-all hover:border-primary hover:shadow-md active:scale-95"
-                >
-                  <span className="text-sm font-semibold">{product.name}</span>
-                  <span className="mt-1 text-lg font-bold text-primary">
-                    {formatCurrency(product.price)}
-                  </span>
-                  {product.option_groups.length > 0 && (
-                    <span className="mt-0.5 text-[10px] text-gray-400">
-                      Con opciones
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-
-            {packs.length > 0 && (
+            {filteredPacks.length > 0 && (
               <>
                 <h3 className="mb-3 mt-6 text-lg font-bold text-primary">
                   Packs
                 </h3>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                  {packs.map((pack) => (
+                  {filteredPacks.map((pack) => (
                     <button
                       key={pack.id}
                       onClick={() => setPackPickerPack(pack)}
@@ -422,13 +508,13 @@ export function SaleModal({
               </>
             )}
 
-            {promotions.length > 0 && (
+            {filteredPromotions.length > 0 && (
               <>
                 <h3 className="mb-3 mt-6 text-lg font-bold text-primary">
                   Promociones
                 </h3>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                  {promotions.map((promo) => (
+                  {filteredPromotions.map((promo) => (
                     <button
                       key={promo.id}
                       onClick={() => addPromotion(promo)}
@@ -594,20 +680,51 @@ export function SaleModal({
             )}
 
             <div>
-              <h3 className="mb-2 font-bold">Descuento manual</h3>
+              <h3 className="mb-2 font-bold">Descuento manual (opcional)</h3>
               <div className="flex items-center gap-2">
-                <span className="text-lg">$</span>
+                <div className="flex gap-1 rounded-lg bg-gray-100 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setDiscountMode("amount")}
+                    className={cn(
+                      "rounded-md px-3 py-1.5 text-sm font-semibold transition",
+                      discountMode === "amount"
+                        ? "bg-white text-foreground shadow-sm"
+                        : "text-muted-foreground"
+                    )}
+                  >
+                    $
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiscountMode("percent")}
+                    className={cn(
+                      "rounded-md px-3 py-1.5 text-sm font-semibold transition",
+                      discountMode === "percent"
+                        ? "bg-white text-foreground shadow-sm"
+                        : "text-muted-foreground"
+                    )}
+                  >
+                    %
+                  </button>
+                </div>
                 <Input
                   type="number"
                   min="0"
-                  value={discount || ""}
-                  onChange={(e) =>
-                    setDiscount(Number(e.target.value) || 0)
-                  }
+                  max={discountMode === "percent" ? 100 : undefined}
+                  step={discountMode === "percent" ? "0.1" : "1"}
+                  value={discountInput}
+                  onChange={(e) => setDiscountInput(e.target.value)}
                   placeholder="0"
                   className="text-lg"
                 />
               </div>
+              {discountMode === "percent" && discount > 0 && (
+                <p className="mt-1 text-xs text-gray-500">
+                  = {formatCurrency(discount)} sobre{" "}
+                  {formatCurrency(subtotal)}
+                </p>
+              )}
             </div>
 
             <div>

@@ -178,9 +178,17 @@ export function VariantPicker({ product, onAdd, onClose }: VariantPickerProps) {
                         <span className="text-sm font-medium">
                           {option.name}
                         </span>
-                        {option.price_delta > 0 && (
-                          <span className="text-xs font-semibold text-primary">
-                            +{formatCurrency(option.price_delta)}
+                        {option.price_delta !== 0 && (
+                          <span
+                            className={cn(
+                              "text-xs font-semibold",
+                              option.price_delta > 0
+                                ? "text-primary"
+                                : "text-green-600"
+                            )}
+                          >
+                            {option.price_delta > 0 ? "+" : "−"}
+                            {formatCurrency(Math.abs(option.price_delta))}
                           </span>
                         )}
                       </button>
