@@ -165,7 +165,7 @@ export function rankProducts(
   }
 
   return Array.from(map.values())
-    .sort((a, b) => b.quantity - a.quantity)
+    .sort((a, b) => b.revenue - a.revenue)
     .slice(0, limit);
 }
 

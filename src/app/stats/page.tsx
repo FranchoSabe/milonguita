@@ -10,11 +10,8 @@ import {
   Users,
 } from "lucide-react";
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
   Cell,
-  Legend,
   Line,
   LineChart,
   Pie,
@@ -43,9 +40,15 @@ import {
   rankCustomersInRange,
   rankProducts,
 } from "@/lib/stats";
-import { formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency } from "@/lib/utils";
 
 const PIE_COLORS = ["#f97316", "#10b981", "#6366f1", "#ec4899"];
+
+const PODIUM_BADGE: Record<number, string> = {
+  0: "bg-amber-100 text-amber-700 ring-1 ring-amber-200",
+  1: "bg-gray-200 text-gray-700 ring-1 ring-gray-300",
+  2: "bg-orange-100 text-orange-700 ring-1 ring-orange-200",
+};
 
 export default function StatsPage() {
   const [range, setRange] = useState<DateRangeValue>(defaultRange());
@@ -87,7 +90,17 @@ export default function StatsPage() {
   );
 
   const topProducts = useMemo(() => rankProducts(sales, 10), [sales]);
+  const topProductsTotal = useMemo(
+    () => topProducts.reduce((s, p) => s + p.revenue, 0),
+    [topProducts]
+  );
+  const topProductMax = topProducts[0]?.revenue ?? 0;
+
   const paymentBreakdown = useMemo(() => breakdownByPayment(sales), [sales]);
+  const paymentTotal = useMemo(
+    () => paymentBreakdown.reduce((s, p) => s + p.revenue, 0),
+    [paymentBreakdown]
+  );
 
   const customerMap = useMemo(() => {
     const map = new Map<string, Customer>();
@@ -142,42 +155,54 @@ export default function StatsPage() {
         <p className="py-8 text-center text-gray-400">Cargando…</p>
       ) : (
         <>
-          <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <section className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatCard
               label="Ingresos"
               value={formatCurrency(kpis.totalRevenue)}
               icon={DollarSign}
               accent="primary"
+              hint="total en el rango"
             />
             <StatCard
-              label="Tickets"
+              label="Ventas"
               value={kpis.salesCount.toLocaleString("es-AR")}
               icon={ReceiptText}
+              hint="cantidad de operaciones"
             />
             <StatCard
-              label="Ticket prom."
+              label="Venta promedio"
               value={formatCurrency(kpis.averageTicket)}
               icon={TrendingUp}
+              hint="monto promedio por venta"
             />
             <StatCard
-              label="Clientes únicos"
+              label="Clientes"
               value={kpis.uniqueCustomers.toLocaleString("es-AR")}
               icon={Users}
               accent="blue"
-              hint="en el rango"
+              hint="compradores distintos"
             />
-            <StatCard
-              label="Puntos otorgados"
-              value={kpis.pointsEarned.toLocaleString("es-AR")}
-              icon={Coins}
-              accent="amber"
-            />
-            <StatCard
-              label="Puntos canjeados"
-              value={kpis.pointsRedeemed.toLocaleString("es-AR")}
-              icon={Coins}
-              accent="green"
-            />
+          </section>
+
+          <section className="mb-6 rounded-xl border bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+              <Coins className="h-3.5 w-3.5" />
+              <span>Puntos de fidelidad</span>
+            </div>
+            <div className="mt-2 flex items-end gap-8">
+              <div>
+                <p className="text-2xl font-bold tabular-nums text-amber-600">
+                  {kpis.pointsEarned.toLocaleString("es-AR")}
+                </p>
+                <p className="text-xs text-gray-500">entregados a clientes</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold tabular-nums text-green-600">
+                  {kpis.pointsRedeemed.toLocaleString("es-AR")}
+                </p>
+                <p className="text-xs text-gray-500">usados como descuento</p>
+              </div>
+            </div>
           </section>
 
           <section className="mb-6 rounded-xl border bg-white p-4 shadow-sm">
@@ -224,45 +249,69 @@ export default function StatsPage() {
 
           <section className="mb-6 grid gap-4 lg:grid-cols-2">
             <div className="rounded-xl border bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-sm font-semibold text-gray-700">
-                Productos más vendidos
-              </h2>
+              <div className="mb-3 flex items-baseline justify-between gap-2">
+                <h2 className="text-sm font-semibold text-gray-700">
+                  Productos que más dinero generan
+                </h2>
+                {topProductsTotal > 0 && (
+                  <span className="text-xs text-gray-500 tabular-nums">
+                    Top {topProducts.length} · {formatCurrency(topProductsTotal)}
+                  </span>
+                )}
+              </div>
               {topProducts.length === 0 ? (
                 <p className="py-8 text-center text-sm text-gray-400">
-                  Sin datos.
+                  Sin ventas en este rango.
                 </p>
               ) : (
-                <div className="h-72">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={topProducts}
-                      layout="vertical"
-                      margin={{ left: 10, right: 10 }}
-                    >
-                      <CartesianGrid stroke="#f3f4f6" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 11 }} />
-                      <YAxis
-                        type="category"
-                        dataKey="name"
-                        tick={{ fontSize: 11 }}
-                        width={120}
-                      />
-                      <Tooltip
-                        formatter={(v, name) => {
-                          const num = Number(v ?? 0);
-                          return name === "revenue"
-                            ? [formatCurrency(num), "Ingresos"]
-                            : [num, "Cantidad"];
-                        }}
-                      />
-                      <Bar
-                        dataKey="quantity"
-                        fill="#f97316"
-                        radius={[0, 4, 4, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                <ol className="space-y-2">
+                  {topProducts.map((p, idx) => {
+                    const barWidth =
+                      topProductMax > 0 ? (p.revenue / topProductMax) * 100 : 0;
+                    const share =
+                      topProductsTotal > 0
+                        ? (p.revenue / topProductsTotal) * 100
+                        : 0;
+                    return (
+                      <li
+                        key={p.key}
+                        className="rounded-lg border bg-gray-50 p-3"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span
+                              className={cn(
+                                "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold tabular-nums",
+                                PODIUM_BADGE[idx] ??
+                                  "bg-white text-gray-500 ring-1 ring-gray-200"
+                              )}
+                            >
+                              {idx + 1}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-gray-900">
+                                {p.name}
+                              </p>
+                              <p className="text-xs text-gray-500 tabular-nums">
+                                {p.quantity.toLocaleString("es-AR")} unidades ·{" "}
+                                {share.toFixed(1)}% del total
+                              </p>
+                            </div>
+                          </div>
+                          <p className="shrink-0 text-sm font-bold tabular-nums text-primary">
+                            {formatCurrency(p.revenue)}
+                          </p>
+                        </div>
+                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-200">
+                          <div
+                            className="h-full rounded-full bg-primary transition-[width] duration-500"
+                            style={{ width: `${barWidth}%` }}
+                          />
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
               )}
             </div>
 
@@ -272,36 +321,75 @@ export default function StatsPage() {
               </h2>
               {paymentBreakdown.length === 0 ? (
                 <p className="py-8 text-center text-sm text-gray-400">
-                  Sin datos.
+                  Sin ventas en este rango.
                 </p>
               ) : (
-                <div className="h-72">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={paymentBreakdown}
-                        dataKey="revenue"
-                        nameKey="label"
-                        innerRadius={50}
-                        outerRadius={85}
-                        paddingAngle={2}
-                      >
-                        {paymentBreakdown.map((_, idx) => (
-                          <Cell
-                            key={idx}
-                            fill={PIE_COLORS[idx % PIE_COLORS.length]}
-                          />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        formatter={(v) => formatCurrency(Number(v ?? 0))}
-                      />
-                      <Legend
-                        iconType="circle"
-                        wrapperStyle={{ fontSize: "12px" }}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                  <ul className="flex-1 space-y-2">
+                    {paymentBreakdown.map((p, idx) => {
+                      const pct =
+                        paymentTotal > 0
+                          ? (p.revenue / paymentTotal) * 100
+                          : 0;
+                      return (
+                        <li
+                          key={p.method}
+                          className="flex items-center justify-between gap-3 rounded-md border bg-gray-50 px-3 py-2"
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span
+                              className="h-3 w-3 shrink-0 rounded-full"
+                              style={{
+                                background: PIE_COLORS[idx % PIE_COLORS.length],
+                              }}
+                              aria-hidden
+                            />
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-gray-900">
+                                {p.label}
+                              </p>
+                              <p className="text-xs text-gray-500 tabular-nums">
+                                {p.count} {p.count === 1 ? "venta" : "ventas"}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-bold tabular-nums text-gray-900">
+                              {formatCurrency(p.revenue)}
+                            </p>
+                            <p className="text-xs text-gray-500 tabular-nums">
+                              {pct.toFixed(1)}%
+                            </p>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <div className="mx-auto h-36 w-36 shrink-0 sm:mx-0">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={paymentBreakdown}
+                          dataKey="revenue"
+                          nameKey="label"
+                          innerRadius={38}
+                          outerRadius={60}
+                          paddingAngle={2}
+                          stroke="none"
+                        >
+                          {paymentBreakdown.map((_, idx) => (
+                            <Cell
+                              key={idx}
+                              fill={PIE_COLORS[idx % PIE_COLORS.length]}
+                            />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          formatter={(v) => formatCurrency(Number(v ?? 0))}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
               )}
             </div>
