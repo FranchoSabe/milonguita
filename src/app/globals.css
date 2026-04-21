@@ -36,58 +36,127 @@
   }
 }
 
-/* Print styles for 80mm ticket */
+/* =============================================================
+   Print styles — 80mm thermal paper
+   Two slots: ticket (cliente) and comanda (cocina).
+   body[data-print-mode] decides which one renders.
+   ============================================================= */
 @media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Hide everything by default */
   body * {
     visibility: hidden;
   }
-  #ticket-print,
-  #ticket-print * {
+
+  /* Only the active print slot is visible */
+  body[data-print-mode="ticket"] [data-print-slot="ticket"],
+  body[data-print-mode="ticket"] [data-print-slot="ticket"] *,
+  body[data-print-mode="comanda"] [data-print-slot="comanda"],
+  body[data-print-mode="comanda"] [data-print-slot="comanda"] * {
     visibility: visible;
   }
-  #ticket-print {
+
+  [data-print-slot] {
     position: absolute;
     left: 0;
     top: 0;
-    width: 80mm;
-    padding: 5mm;
+    width: 72mm;
+    padding: 4mm;
+    color: #000;
+    font-family: "Courier New", "Consolas", monospace;
     font-size: 12px;
-    font-family: "Courier New", monospace;
+    line-height: 1.35;
   }
-  #ticket-print .ticket-header {
+
+  /* Shared primitives */
+  .print-center {
     text-align: center;
-    border-bottom: 1px dashed #000;
-    padding-bottom: 8px;
-    margin-bottom: 8px;
   }
-  #ticket-print .ticket-items {
-    border-bottom: 1px dashed #000;
-    padding-bottom: 8px;
-    margin-bottom: 8px;
+  .print-bold {
+    font-weight: 700;
   }
-  #ticket-print .ticket-item {
+  .print-divider {
+    border-top: 1px dashed #000;
+    margin: 6px 0;
+  }
+  .print-row {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 4px;
+    gap: 6px;
   }
-  #ticket-print .ticket-totals {
-    margin-top: 8px;
+  .print-muted {
+    font-size: 11px;
   }
-  #ticket-print .ticket-total-line {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 2px;
-  }
-  #ticket-print .ticket-total-final {
-    font-weight: bold;
+  .print-big {
     font-size: 14px;
+  }
+  .print-xl {
+    font-size: 16px;
+  }
+  .print-xxl {
+    font-size: 20px;
+  }
+  .print-tight {
+    margin: 0;
+  }
+
+  /* Ticket-specific */
+  [data-print-slot="ticket"] .ticket-title {
+    font-size: 15px;
+    font-weight: 700;
+    text-align: center;
+  }
+  [data-print-slot="ticket"] .ticket-total {
+    font-size: 16px;
+    font-weight: 700;
     border-top: 1px dashed #000;
     padding-top: 4px;
     margin-top: 4px;
+    display: flex;
+    justify-content: space-between;
   }
-  #ticket-print .ticket-footer {
+
+  /* Comanda-specific: bigger, cleaner for kitchen glance */
+  [data-print-slot="comanda"] .comanda-title {
+    font-size: 18px;
+    font-weight: 700;
     text-align: center;
-    margin-top: 12px;
-    font-size: 10px;
+  }
+  [data-print-slot="comanda"] .comanda-item {
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px dotted #888;
+  }
+  [data-print-slot="comanda"] .comanda-item:last-child {
+    border-bottom: 0;
+  }
+  [data-print-slot="comanda"] .comanda-qty {
+    font-size: 22px;
+    font-weight: 700;
+    display: inline-block;
+    min-width: 28px;
+  }
+  [data-print-slot="comanda"] .comanda-name {
+    font-size: 15px;
+    font-weight: 700;
+  }
+  [data-print-slot="comanda"] .comanda-variant {
+    font-size: 12px;
+    margin-left: 30px;
+  }
+  [data-print-slot="comanda"] .comanda-sub {
+    font-size: 12px;
+    margin-left: 30px;
   }
 }

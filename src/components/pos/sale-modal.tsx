@@ -5,6 +5,7 @@ import { X, Plus, Minus, Trash2, Printer, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TicketPreview, Ticket } from "./ticket";
+import { Comanda } from "./comanda";
 import { VariantPicker } from "./variant-picker";
 import { PackBuilder } from "./pack-builder";
 import { CustomerPicker } from "./customer-picker";
@@ -301,8 +302,20 @@ export function SaleModal({
     }
   };
 
-  const handlePrint = () => {
-    window.print();
+  const printDocument = (mode: "ticket" | "comanda") => {
+    document.body.dataset.printMode = mode;
+    // Wait for the browser to paint the change before launching the dialog.
+    requestAnimationFrame(() => {
+      window.print();
+      // window.print() is synchronous; cleanup once the user closes the dialog.
+      delete document.body.dataset.printMode;
+    });
+  };
+
+  const printBoth = () => {
+    printDocument("comanda");
+    // Give the browser a tick to settle the first print before firing the next.
+    setTimeout(() => printDocument("ticket"), 300);
   };
 
   if (loading) {
@@ -675,26 +688,46 @@ export function SaleModal({
       )}
 
       {step === "success" && completedSale && (
-        <div className="flex flex-1 flex-col items-center justify-center p-4">
+        <div className="flex flex-1 flex-col items-center overflow-y-auto p-4">
           <CheckCircle2 className="mb-4 h-20 w-20 text-green-500" />
           <h3 className="mb-2 text-2xl font-bold">Venta registrada</h3>
           <p className="mb-6 text-gray-500">
             Total: {formatCurrency(completedSale.total)}
           </p>
 
-          <TicketPreview sale={completedSale} />
+          <TicketPreview sale={completedSale} customer={customer} />
 
-          <div className="mt-6 flex gap-3">
-            <Button variant="outline" onClick={handlePrint} size="lg">
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
+            <Button
+              variant="outline"
+              onClick={() => printDocument("comanda")}
+              size="lg"
+            >
               <Printer className="mr-2 h-5 w-5" />
-              Imprimir ticket
+              Comanda cocina
             </Button>
-            <Button onClick={onClose} size="lg">
+            <Button
+              variant="outline"
+              onClick={() => printDocument("ticket")}
+              size="lg"
+            >
+              <Printer className="mr-2 h-5 w-5" />
+              Ticket cliente
+            </Button>
+            <Button onClick={printBoth} size="lg">
+              <Printer className="mr-2 h-5 w-5" />
+              Ambos
+            </Button>
+          </div>
+
+          <div className="mt-4">
+            <Button variant="ghost" onClick={onClose} size="lg">
               Nueva venta
             </Button>
           </div>
 
-          <Ticket sale={completedSale} />
+          <Ticket sale={completedSale} customer={customer} />
+          <Comanda sale={completedSale} />
         </div>
       )}
 
