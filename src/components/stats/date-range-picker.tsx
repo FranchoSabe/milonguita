@@ -1,10 +1,23 @@
 "use client";
 
 import { Input } from "@/components/ui/input";
-import { daysAgo, startOfDay, toISODate } from "@/lib/stats";
+import {
+  daysAgo,
+  startOfDay,
+  startOfMonth,
+  startOfWeek,
+  toISODate,
+} from "@/lib/stats";
 import { cn } from "@/lib/utils";
 
-export type RangePreset = "today" | "7d" | "30d" | "90d" | "custom";
+export type RangePreset =
+  | "today"
+  | "yesterday"
+  | "thisWeek"
+  | "thisMonth"
+  | "30d"
+  | "90d"
+  | "custom";
 
 export interface DateRangeValue {
   from: string;
@@ -19,15 +32,36 @@ interface DateRangePickerProps {
 
 function presetRange(preset: Exclude<RangePreset, "custom">): DateRangeValue {
   const today = startOfDay(new Date());
-  const map: Record<Exclude<RangePreset, "custom">, Date> = {
-    today: today,
-    "7d": daysAgo(6),
-    "30d": daysAgo(29),
-    "90d": daysAgo(89),
-  };
+  let from: Date;
+  let to: Date = today;
+
+  switch (preset) {
+    case "today":
+      from = today;
+      break;
+    case "yesterday": {
+      const y = daysAgo(1);
+      from = y;
+      to = y;
+      break;
+    }
+    case "thisWeek":
+      from = startOfWeek(today);
+      break;
+    case "thisMonth":
+      from = startOfMonth(today);
+      break;
+    case "30d":
+      from = daysAgo(29);
+      break;
+    case "90d":
+      from = daysAgo(89);
+      break;
+  }
+
   return {
-    from: toISODate(map[preset]),
-    to: toISODate(today),
+    from: toISODate(from),
+    to: toISODate(to),
     preset,
   };
 }
@@ -38,14 +72,16 @@ export function defaultRange(): DateRangeValue {
 
 const PRESETS: { key: Exclude<RangePreset, "custom">; label: string }[] = [
   { key: "today", label: "Hoy" },
-  { key: "7d", label: "7 días" },
+  { key: "yesterday", label: "Ayer" },
+  { key: "thisWeek", label: "Esta semana" },
+  { key: "thisMonth", label: "Este mes" },
   { key: "30d", label: "30 días" },
   { key: "90d", label: "90 días" },
 ];
 
 export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
   return (
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
       <div className="flex flex-wrap gap-1 rounded-lg bg-gray-100 p-1">
         {PRESETS.map((p) => (
           <button
@@ -64,7 +100,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
         ))}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 sm:border-l sm:pl-3">
         <Input
           type="date"
           value={value.from}
@@ -72,6 +108,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
             onChange({ ...value, from: e.target.value, preset: "custom" })
           }
           className="h-9 w-auto"
+          aria-label="Desde"
         />
         <span className="text-xs text-gray-500">a</span>
         <Input
@@ -81,6 +118,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
             onChange({ ...value, to: e.target.value, preset: "custom" })
           }
           className="h-9 w-auto"
+          aria-label="Hasta"
         />
       </div>
     </div>

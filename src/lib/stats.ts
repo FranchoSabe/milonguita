@@ -68,6 +68,27 @@ export function daysAgo(n: number): Date {
   return d;
 }
 
+export function startOfWeek(date: Date): Date {
+  const d = startOfDay(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+export function startOfMonth(date: Date): Date {
+  const d = startOfDay(date);
+  d.setDate(1);
+  return d;
+}
+
+export function previousPeriod(from: Date, to: Date): { from: Date; to: Date } {
+  const durationMs = to.getTime() - from.getTime();
+  const prevTo = new Date(from.getTime() - 1);
+  const prevFrom = new Date(prevTo.getTime() - durationMs);
+  return { from: prevFrom, to: prevTo };
+}
+
 export function computeKpis(sales: Sale[]): StatsKpis {
   let totalRevenue = 0;
   let pointsEarned = 0;
