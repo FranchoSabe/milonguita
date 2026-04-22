@@ -175,4 +175,5 @@ export interface CashRegister {
   closed_at: string | null;
   total_sales: number;
   status: "open" | "closed";
+  business_day: string;
 }

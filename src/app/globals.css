@@ -63,7 +63,9 @@
   body[data-print-mode="ticket"] [data-print-slot="ticket"],
   body[data-print-mode="ticket"] [data-print-slot="ticket"] *,
   body[data-print-mode="comanda"] [data-print-slot="comanda"],
-  body[data-print-mode="comanda"] [data-print-slot="comanda"] * {
+  body[data-print-mode="comanda"] [data-print-slot="comanda"] *,
+  body[data-print-mode="cierre"] [data-print-slot="cierre"],
+  body[data-print-mode="cierre"] [data-print-slot="cierre"] * {
     visibility: visible;
   }
 

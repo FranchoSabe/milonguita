@@ -414,10 +414,34 @@ export async function getOpenCashRegister(): Promise<CashRegister | null> {
   return data;
 }
 
-export async function openCashRegister(): Promise<CashRegister> {
+async function getCashRegisterByBusinessDay(
+  businessDay: string
+): Promise<CashRegister | null> {
   const { data, error } = await supabase
     .from("cash_registers")
-    .insert({ status: "open", total_sales: 0 })
+    .select("*")
+    .eq("business_day", businessDay)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function openCashRegister(
+  businessDay: string
+): Promise<CashRegister> {
+  const existing = await getCashRegisterByBusinessDay(businessDay);
+  if (existing) {
+    throw new Error(
+      existing.status === "open"
+        ? "Ya hay una caja abierta para ese día."
+        : "Ya existe una caja cerrada para ese día."
+    );
+  }
+
+  const { data, error } = await supabase
+    .from("cash_registers")
+    .insert({ status: "open", total_sales: 0, business_day: businessDay })
     .select()
     .single();
 
@@ -739,27 +763,26 @@ export async function getTodaySales(
   return data || [];
 }
 
-export async function getSalesByDateRange(
+// Sales whose register is closed AND whose business_day falls in [from, to].
+// Used by /stats so the currently-open register is excluded.
+export async function getClosedRegisterSalesByBusinessDayRange(
   from: string,
   to: string
 ): Promise<Sale[]> {
   const { data, error } = await supabase
     .from("sales")
-    .select("*")
-    .gte("created_at", from)
-    .lte("created_at", to)
+    .select("*, cash_register:cash_registers!inner(business_day, status)")
+    .eq("cash_register.status", "closed")
+    .gte("cash_register.business_day", from)
+    .lte("cash_register.business_day", to)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return data || [];
-}
-
-export async function getAllSales(): Promise<Sale[]> {
-  const { data, error } = await supabase
-    .from("sales")
-    .select("*")
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
-  return data || [];
+  return (data || []).map((row) => {
+    const typed = row as Sale & {
+      cash_register?: { business_day: string; status: string };
+    };
+    delete typed.cash_register;
+    return typed as Sale;
+  });
 }

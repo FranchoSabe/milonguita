@@ -39,8 +39,12 @@ create table cash_registers (
   opened_at timestamp with time zone default now(),
   closed_at timestamp with time zone,
   total_sales numeric not null default 0,
-  status text not null default 'open' check (status in ('open', 'closed'))
+  status text not null default 'open' check (status in ('open', 'closed')),
+  business_day date not null
 );
+
+create unique index idx_cash_registers_business_day
+  on cash_registers(business_day);
 
 -- ============================================
 -- Table: sales

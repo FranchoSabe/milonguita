@@ -29,9 +29,9 @@ import {
 } from "@/components/stats/date-range-picker";
 import {
   getAllCustomers,
-  getSalesByDateRange,
+  getClosedRegisterSalesByBusinessDayRange,
 } from "@/lib/queries";
-import { Customer, Sale } from "@/lib/types";
+import { Customer, Sale, SaleItem } from "@/lib/types";
 import {
   bucketByDay,
   breakdownByPayment,
@@ -40,8 +40,9 @@ import {
   previousPeriod,
   rankCustomersInRange,
   rankProducts,
+  toISODate,
 } from "@/lib/stats";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency, formatDateTime } from "@/lib/utils";
 
 const PIE_COLORS = ["#f97316", "#10b981", "#6366f1", "#ec4899"];
 
@@ -100,13 +101,19 @@ export default function StatsPage() {
       const prev = previousPeriod(fromDate, toDate);
 
       const [s, c, prevSales] = await Promise.all([
-        getSalesByDateRange(fromDate.toISOString(), toDate.toISOString()),
+        getClosedRegisterSalesByBusinessDayRange(range.from, range.to),
         getAllCustomers(),
-        getSalesByDateRange(prev.from.toISOString(), prev.to.toISOString()),
+        getClosedRegisterSalesByBusinessDayRange(
+          toISODate(prev.from),
+          toISODate(prev.to)
+        ),
       ]);
       setSales(s);
       setCustomers(c);
       setPrevRevenue(prevSales.reduce((sum, x) => sum + x.total, 0));
+      // fromDate / toDate kept for downstream date-bucket helpers below.
+      void fromDate;
+      void toDate;
     } catch (err) {
       console.error("Error loading stats:", err);
     } finally {
@@ -547,7 +554,7 @@ export default function StatsPage() {
             </>
           )}
 
-          <section className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
             <StatCard
               label="Clientes registrados"
               value={globalStats.total.toLocaleString("es-AR")}
@@ -565,6 +572,64 @@ export default function StatsPage() {
               icon={TrendingUp}
               hint="por cliente activo"
             />
+          </section>
+
+          <section className="mb-6">
+            <h2 className="mb-3 text-lg font-semibold">Historial de ventas</h2>
+            <div className="overflow-x-auto rounded-lg border bg-white shadow-sm">
+              <table className="w-full text-sm">
+                <thead className="border-b bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      Fecha
+                    </th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      Items
+                    </th>
+                    <th className="px-4 py-3 text-right font-medium text-gray-500">
+                      Total
+                    </th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      Pago
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {sales.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={4}
+                        className="px-4 py-8 text-center text-gray-400"
+                      >
+                        No hay ventas en este rango.
+                      </td>
+                    </tr>
+                  ) : (
+                    sales.map((sale) => (
+                      <tr key={sale.id} className="hover:bg-gray-50">
+                        <td className="whitespace-nowrap px-4 py-3">
+                          {formatDateTime(sale.created_at)}
+                        </td>
+                        <td className="px-4 py-3">
+                          {sale.items
+                            .map(
+                              (item: SaleItem) =>
+                                `${item.quantity}x ${item.name}`
+                            )
+                            .join(", ")}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right font-medium">
+                          {formatCurrency(sale.total)}
+                        </td>
+                        <td className="px-4 py-3 capitalize">
+                          {sale.payment_method}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </section>
         </>
       )}

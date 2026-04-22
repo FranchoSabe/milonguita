@@ -1,29 +1,78 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ShoppingCart, DoorOpen } from "lucide-react";
+import {
+  ShoppingCart,
+  DoorOpen,
+  Receipt,
+  Lock,
+  ArrowLeft,
+  Printer,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { SaleModal } from "@/components/pos/sale-modal";
-import { getOpenCashRegister, openCashRegister, getTodaySales } from "@/lib/queries";
-import { CashRegister } from "@/lib/types";
-import { formatCurrency } from "@/lib/utils";
+import {
+  CashCloseSummary,
+  CashCloseTicket,
+  CashCloseTicketPreview,
+} from "@/components/pos/cash-close-ticket";
+import {
+  closeCashRegister,
+  getOpenCashRegister,
+  getTodaySales,
+  openCashRegister,
+} from "@/lib/queries";
+import { CashRegister, PAYMENT_METHOD_LABELS, PaymentMethod, Sale } from "@/lib/types";
+import { formatCurrency, formatDate, formatTime } from "@/lib/utils";
+
+type View = "main" | "status";
+type CloseStep = "confirm" | "ticket";
+
+function todayLocalISO(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function formatBusinessDay(value: string): string {
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1).toLocaleDateString("es-AR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+const PAYMENT_ORDER: PaymentMethod[] = ["efectivo", "qr", "transferencia"];
 
 export default function HomePage() {
   const [cashRegister, setCashRegister] = useState<CashRegister | null>(null);
+  const [sales, setSales] = useState<Sale[]>([]);
   const [showSaleModal, setShowSaleModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
-  const [todayTotal, setTodayTotal] = useState(0);
-  const [todayCount, setTodayCount] = useState(0);
+  const [openDate, setOpenDate] = useState(todayLocalISO());
+  const [openError, setOpenError] = useState<string | null>(null);
+  const [view, setView] = useState<View>("main");
+  const [closeStep, setCloseStep] = useState<CloseStep | null>(null);
+  const [closeSummary, setCloseSummary] = useState<CashCloseSummary | null>(null);
+  const [closing, setClosing] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
       const register = await getOpenCashRegister();
       setCashRegister(register);
       if (register) {
-        const sales = await getTodaySales(register.id);
-        setTodayTotal(sales.reduce((sum, s) => sum + s.total, 0));
-        setTodayCount(sales.length);
+        const todaySales = await getTodaySales(register.id);
+        setSales(todaySales);
+      } else {
+        setSales([]);
       }
     } catch (err) {
       console.error("Error loading data:", err);
@@ -38,15 +87,66 @@ export default function HomePage() {
 
   const handleOpenCashRegister = async () => {
     setOpening(true);
+    setOpenError(null);
     try {
-      const register = await openCashRegister();
+      const register = await openCashRegister(openDate);
       setCashRegister(register);
+      setSales([]);
     } catch (err) {
       console.error("Error opening cash register:", err);
-      alert("Error al abrir la caja. Intentá de nuevo.");
+      setOpenError(
+        err instanceof Error
+          ? err.message
+          : "Error al abrir la caja. Intentá de nuevo."
+      );
     } finally {
       setOpening(false);
     }
+  };
+
+  const startClose = () => {
+    if (!cashRegister) return;
+    setCloseStep("confirm");
+  };
+
+  const confirmCloseAndShowTicket = async () => {
+    if (!cashRegister) return;
+    setClosing(true);
+    try {
+      const total = sales.reduce((sum, s) => sum + s.total, 0);
+      const updated = await closeCashRegister(cashRegister.id, total);
+      setCloseSummary({
+        register: updated,
+        closedAt: updated.closed_at ?? new Date().toISOString(),
+        sales,
+      });
+      setCloseStep("ticket");
+    } catch (err) {
+      console.error("Error closing register:", err);
+      alert("Error al cerrar la caja.");
+    } finally {
+      setClosing(false);
+    }
+  };
+
+  const finishClose = () => {
+    setCloseStep(null);
+    setCloseSummary(null);
+    setView("main");
+    setCashRegister(null);
+    setSales([]);
+    setOpenDate(todayLocalISO());
+    setOpenError(null);
+    loadData();
+  };
+
+  const handlePrintAndFinish = () => {
+    document.body.dataset.printMode = "cierre";
+    requestAnimationFrame(() => {
+      window.print();
+      delete document.body.dataset.printMode;
+      finishClose();
+    });
   };
 
   if (loading) {
@@ -62,12 +162,35 @@ export default function HomePage() {
       <div className="flex min-h-screen flex-col items-center justify-center p-4">
         <DoorOpen className="mb-6 h-24 w-24 text-gray-300" />
         <h1 className="mb-2 text-2xl font-bold">Caja cerrada</h1>
-        <p className="mb-8 text-center text-gray-500">
-          Abrí la caja para comenzar a registrar ventas
+        <p className="mb-6 text-center text-gray-500">
+          Elegí el día laboral y abrí la caja para comenzar.
         </p>
+
+        <div className="mb-6 w-full max-w-xs">
+          <Label htmlFor="business-day" className="mb-1 block">
+            Día laboral
+          </Label>
+          <Input
+            id="business-day"
+            type="date"
+            value={openDate}
+            max={todayLocalISO()}
+            onChange={(e) => {
+              setOpenDate(e.target.value);
+              setOpenError(null);
+            }}
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            {openDate ? formatBusinessDay(openDate) : ""}
+          </p>
+          {openError && (
+            <p className="mt-2 text-sm text-red-600">{openError}</p>
+          )}
+        </div>
+
         <Button
           onClick={handleOpenCashRegister}
-          disabled={opening}
+          disabled={opening || !openDate}
           size="xl"
           className="px-12 text-xl"
         >
@@ -77,29 +200,192 @@ export default function HomePage() {
     );
   }
 
+  if (view === "status") {
+    const total = sales.reduce((sum, s) => sum + s.total, 0);
+    const avg = sales.length > 0 ? total / sales.length : 0;
+    const byMethod = PAYMENT_ORDER.map((method) => {
+      const filtered = sales.filter((s) => s.payment_method === method);
+      return {
+        method,
+        label: PAYMENT_METHOD_LABELS[method],
+        count: filtered.length,
+        total: filtered.reduce((sum, s) => sum + s.total, 0),
+      };
+    });
+
+    return (
+      <div className="min-h-screen p-4 pb-24">
+        <div className="mb-4 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => setView("main")}
+            className="flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Volver
+          </button>
+          <Button onClick={startClose} variant="destructive" size="sm">
+            <Lock className="mr-2 h-4 w-4" />
+            Cerrar caja
+          </Button>
+        </div>
+
+        <h1 className="mb-1 text-2xl font-bold">Estado de caja</h1>
+        <p className="mb-6 text-sm text-gray-500">
+          {formatBusinessDay(cashRegister.business_day)} · abierta a las{" "}
+          {formatTime(cashRegister.opened_at)} (
+          {formatDate(cashRegister.opened_at)})
+        </p>
+
+        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="rounded-xl border bg-white p-4 shadow-sm">
+            <p className="text-sm text-gray-500">Ventas</p>
+            <p className="mt-1 text-2xl font-bold">{sales.length}</p>
+          </div>
+          <div className="rounded-xl border bg-white p-4 shadow-sm">
+            <p className="text-sm text-gray-500">Total</p>
+            <p className="mt-1 text-2xl font-bold text-primary">
+              {formatCurrency(total)}
+            </p>
+          </div>
+          <div className="rounded-xl border bg-white p-4 shadow-sm">
+            <p className="text-sm text-gray-500">Venta promedio</p>
+            <p className="mt-1 text-xl font-bold">{formatCurrency(avg)}</p>
+          </div>
+          <div className="rounded-xl border bg-white p-4 shadow-sm">
+            <p className="text-sm text-gray-500">Apertura</p>
+            <p className="mt-1 text-xl font-bold">
+              {formatTime(cashRegister.opened_at)}
+            </p>
+          </div>
+        </div>
+
+        <h2 className="mb-3 text-lg font-semibold">Por método de pago</h2>
+        <div className="space-y-2">
+          {byMethod.map((m) => (
+            <div
+              key={m.method}
+              className="flex items-center justify-between rounded-lg border bg-white px-4 py-3 shadow-sm"
+            >
+              <div>
+                <p className="font-medium">{m.label}</p>
+                <p className="text-xs text-gray-500">
+                  {m.count} {m.count === 1 ? "venta" : "ventas"}
+                </p>
+              </div>
+              <p className="font-bold tabular-nums">{formatCurrency(m.total)}</p>
+            </div>
+          ))}
+        </div>
+
+        {closeStep && renderCloseFlow()}
+      </div>
+    );
+  }
+
+  function renderCloseFlow() {
+    if (!closeStep) return null;
+
+    if (closeStep === "confirm") {
+      const total = sales.reduce((sum, s) => sum + s.total, 0);
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+            <h3 className="mb-2 text-lg font-bold">¿Cerrar caja?</h3>
+            <p className="mb-1 text-sm text-gray-600">
+              Día laboral:{" "}
+              <span className="font-medium">
+                {cashRegister && formatBusinessDay(cashRegister.business_day)}
+              </span>
+            </p>
+            <p className="mb-4 text-sm text-gray-600">
+              Total de la caja:{" "}
+              <span className="font-bold">{formatCurrency(total)}</span> (
+              {sales.length} ventas)
+            </p>
+            <p className="mb-4 text-xs text-gray-500">
+              No vas a poder registrar más ventas hasta abrir una nueva caja.
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button
+                onClick={() => setCloseStep(null)}
+                variant="outline"
+                disabled={closing}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={confirmCloseAndShowTicket}
+                variant="destructive"
+                disabled={closing}
+              >
+                {closing ? "Cerrando..." : "Sí, cerrar caja"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (closeStep === "ticket" && closeSummary) {
+      return (
+        <>
+          <div className="fixed inset-0 z-50 flex items-center justify-center overflow-auto bg-black/50 p-4 print:hidden">
+            <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+              <h3 className="mb-3 text-lg font-bold">Caja cerrada</h3>
+              <p className="mb-4 text-sm text-gray-600">
+                Revisá el cierre. Podés imprimirlo o solo cerrarlo.
+              </p>
+              <div className="mb-4 max-h-[60vh] overflow-auto">
+                <CashCloseTicketPreview summary={closeSummary} />
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <Button onClick={finishClose} variant="outline">
+                  <X className="mr-2 h-4 w-4" />
+                  Cerrar sin imprimir
+                </Button>
+                <Button onClick={handlePrintAndFinish}>
+                  <Printer className="mr-2 h-4 w-4" />
+                  Imprimir
+                </Button>
+              </div>
+            </div>
+          </div>
+          <CashCloseTicket summary={closeSummary} />
+        </>
+      );
+    }
+
+    return null;
+  }
+
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center p-4">
-      <div className="mb-8 grid w-full max-w-md grid-cols-2 gap-4">
-        <div className="rounded-xl border bg-white p-4 text-center shadow-sm">
-          <p className="text-sm text-gray-500">Ventas hoy</p>
-          <p className="text-2xl font-bold">{todayCount}</p>
-        </div>
-        <div className="rounded-xl border bg-white p-4 text-center shadow-sm">
-          <p className="text-sm text-gray-500">Total hoy</p>
-          <p className="text-2xl font-bold text-primary">
-            {formatCurrency(todayTotal)}
-          </p>
-        </div>
+    <div className="relative flex min-h-screen flex-col">
+      <div className="flex justify-end gap-2 p-3">
+        <Button
+          onClick={() => setView("status")}
+          variant="outline"
+          size="sm"
+        >
+          <Receipt className="mr-2 h-4 w-4" />
+          Estado de caja
+        </Button>
+        <Button onClick={startClose} variant="destructive" size="sm">
+          <Lock className="mr-2 h-4 w-4" />
+          Cerrar caja
+        </Button>
       </div>
 
-      <Button
-        onClick={() => setShowSaleModal(true)}
-        size="xl"
-        className="h-32 w-64 flex-col gap-3 rounded-2xl text-xl shadow-lg transition-transform hover:scale-105"
-      >
-        <ShoppingCart className="h-12 w-12" />
-        REGISTRAR VENTA
-      </Button>
+      <div className="flex flex-1 items-center justify-center p-4">
+        <Button
+          onClick={() => setShowSaleModal(true)}
+          size="xl"
+          className="h-32 w-64 flex-col gap-3 rounded-2xl text-xl shadow-lg transition-transform hover:scale-105"
+        >
+          <ShoppingCart className="h-12 w-12" />
+          REGISTRAR VENTA
+        </Button>
+      </div>
 
       {showSaleModal && (
         <SaleModal
@@ -111,6 +397,8 @@ export default function HomePage() {
           onSaleComplete={() => loadData()}
         />
       )}
+
+      {closeStep && renderCloseFlow()}
     </div>
   );
 }
