@@ -24,14 +24,22 @@ import {
 } from "@/components/pos/cash-close-ticket";
 import {
   closeCashRegister,
+  getCashRegistersForBusinessDay,
   getOpenCashRegister,
   getOpenOrders,
   getTodayPaidSales,
   openCashRegister,
   reopenPaidOrder,
 } from "@/lib/queries";
-import { CashRegister, PAYMENT_METHOD_LABELS, PaymentMethod, Sale } from "@/lib/types";
-import { formatCurrency, formatDate, formatTime } from "@/lib/utils";
+import {
+  CashRegister,
+  PAYMENT_METHOD_LABELS,
+  PaymentMethod,
+  Sale,
+  SHIFT_LABELS,
+  Shift,
+} from "@/lib/types";
+import { cn, formatCurrency, formatDate, formatTime } from "@/lib/utils";
 
 type View = "main" | "status";
 type CloseStep = "confirm" | "ticket";
@@ -72,6 +80,8 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
   const [openDate, setOpenDate] = useState(todayLocalISO());
+  const [openShift, setOpenShift] = useState<Shift>("mediodia");
+  const [dayRegisters, setDayRegisters] = useState<CashRegister[]>([]);
   const [openError, setOpenError] = useState<string | null>(null);
   const [view, setView] = useState<View>("main");
   const [closeStep, setCloseStep] = useState<CloseStep | null>(null);
@@ -109,7 +119,7 @@ export default function HomePage() {
     setOpening(true);
     setOpenError(null);
     try {
-      const register = await openCashRegister(openDate);
+      const register = await openCashRegister(openDate, openShift);
       setCashRegister(register);
       setPaidSales([]);
       setOpenOrders([]);
@@ -124,6 +134,27 @@ export default function HomePage() {
       setOpening(false);
     }
   };
+
+  // Refresh the list of registers already present for the selected day
+  // so we can disable shifts that are already closed.
+  useEffect(() => {
+    if (cashRegister) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const regs = await getCashRegistersForBusinessDay(openDate);
+        if (!cancelled) setDayRegisters(regs);
+      } catch (err) {
+        console.error("Error loading day registers:", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [openDate, cashRegister]);
+
+  const shiftStatusOnSelectedDay = (shift: Shift) =>
+    dayRegisters.find((r) => r.shift === shift)?.status ?? null;
 
   const startClose = () => {
     if (!cashRegister) return;
@@ -205,43 +236,96 @@ export default function HomePage() {
   }
 
   if (!cashRegister) {
+    const selectedShiftStatus = shiftStatusOnSelectedDay(openShift);
+    const selectedShiftIsClosed = selectedShiftStatus === "closed";
+
     return (
       <div className="flex min-h-screen flex-col items-center justify-center p-4">
         <DoorOpen className="mb-6 h-24 w-24 text-gray-300" />
         <h1 className="mb-2 text-2xl font-bold">Caja cerrada</h1>
         <p className="mb-6 text-center text-gray-500">
-          Elegí el día laboral y abrí la caja para comenzar.
+          Elegí día y turno para abrir la caja.
         </p>
 
-        <div className="mb-6 w-full max-w-xs">
-          <Label htmlFor="business-day" className="mb-1 block">
-            Día laboral
-          </Label>
-          <Input
-            id="business-day"
-            type="date"
-            value={openDate}
-            max={todayLocalISO()}
-            onChange={(e) => {
-              setOpenDate(e.target.value);
-              setOpenError(null);
-            }}
-          />
-          <p className="mt-1 text-xs text-gray-500">
-            {openDate ? formatBusinessDay(openDate) : ""}
-          </p>
+        <div className="mb-6 w-full max-w-xs space-y-4">
+          <div>
+            <Label htmlFor="business-day" className="mb-1 block">
+              Día laboral
+            </Label>
+            <Input
+              id="business-day"
+              type="date"
+              value={openDate}
+              max={todayLocalISO()}
+              onChange={(e) => {
+                setOpenDate(e.target.value);
+                setOpenError(null);
+              }}
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              {openDate ? formatBusinessDay(openDate) : ""}
+            </p>
+          </div>
+
+          <div>
+            <Label className="mb-1 block">Turno</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {(["mediodia", "noche"] as Shift[]).map((shift) => {
+                const status = shiftStatusOnSelectedDay(shift);
+                const disabled = status !== null;
+                const active = openShift === shift;
+                return (
+                  <button
+                    key={shift}
+                    type="button"
+                    onClick={() => {
+                      if (disabled) return;
+                      setOpenShift(shift);
+                      setOpenError(null);
+                    }}
+                    disabled={disabled}
+                    className={cn(
+                      "rounded-xl border-2 px-4 py-3 text-center text-sm font-semibold transition-all",
+                      active && !disabled
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-gray-200 hover:border-gray-300",
+                      disabled && "cursor-not-allowed opacity-60"
+                    )}
+                  >
+                    {SHIFT_LABELS[shift]}
+                    {status === "open" && (
+                      <span className="ml-1 text-[10px] font-normal">
+                        (abierta)
+                      </span>
+                    )}
+                    {status === "closed" && (
+                      <span className="ml-1 text-[10px] font-normal">
+                        (cerrada)
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            {selectedShiftIsClosed && (
+              <p className="mt-2 text-xs text-amber-600">
+                Ese turno ya fue cerrado para este día.
+              </p>
+            )}
+          </div>
+
           {openError && (
-            <p className="mt-2 text-sm text-red-600">{openError}</p>
+            <p className="text-sm text-red-600">{openError}</p>
           )}
         </div>
 
         <Button
           onClick={handleOpenCashRegister}
-          disabled={opening || !openDate}
+          disabled={opening || !openDate || selectedShiftStatus !== null}
           size="xl"
           className="px-12 text-xl"
         >
-          {opening ? "Abriendo..." : "Abrir Caja"}
+          {opening ? "Abriendo..." : `Abrir caja ${SHIFT_LABELS[openShift]}`}
         </Button>
       </div>
     );

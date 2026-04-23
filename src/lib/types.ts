@@ -175,6 +175,15 @@ export interface SaleItem {
   pack_items?: PackItem[];
 }
 
+export type Shift = "mediodia" | "noche";
+
+export const SHIFT_LABELS: Record<Shift, string> = {
+  mediodia: "Mediodía",
+  noche: "Noche",
+};
+
+export const SHIFTS: Shift[] = ["mediodia", "noche"];
+
 export interface CashRegister {
   id: string;
   opened_at: string;
@@ -182,4 +191,5 @@ export interface CashRegister {
   total_sales: number;
   status: "open" | "closed";
   business_day: string;
+  shift: Shift;
 }

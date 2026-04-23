@@ -16,6 +16,7 @@ import {
   Customer,
   CustomerPointsHistory,
   PointsMovementType,
+  Shift,
 } from "./types";
 
 // ============================================
@@ -414,13 +415,28 @@ export async function getOpenCashRegister(): Promise<CashRegister | null> {
   return data;
 }
 
-async function getCashRegisterByBusinessDay(
+export async function getCashRegistersForBusinessDay(
   businessDay: string
+): Promise<CashRegister[]> {
+  const { data, error } = await supabase
+    .from("cash_registers")
+    .select("*")
+    .eq("business_day", businessDay)
+    .order("shift", { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+}
+
+async function getCashRegisterByBusinessDayShift(
+  businessDay: string,
+  shift: Shift
 ): Promise<CashRegister | null> {
   const { data, error } = await supabase
     .from("cash_registers")
     .select("*")
     .eq("business_day", businessDay)
+    .eq("shift", shift)
     .maybeSingle();
 
   if (error) throw error;
@@ -428,20 +444,35 @@ async function getCashRegisterByBusinessDay(
 }
 
 export async function openCashRegister(
-  businessDay: string
+  businessDay: string,
+  shift: Shift
 ): Promise<CashRegister> {
-  const existing = await getCashRegisterByBusinessDay(businessDay);
+  // Guard 1: same (day, shift) can't be reopened.
+  const existing = await getCashRegisterByBusinessDayShift(businessDay, shift);
   if (existing) {
     throw new Error(
       existing.status === "open"
-        ? "Ya hay una caja abierta para ese día."
-        : "Ya existe una caja cerrada para ese día."
+        ? "Ya hay una caja abierta para ese turno."
+        : "Ya existe una caja cerrada para ese día/turno."
+    );
+  }
+
+  // Guard 2: at most one open register across the whole system.
+  const currentlyOpen = await getOpenCashRegister();
+  if (currentlyOpen) {
+    throw new Error(
+      "Ya hay otra caja abierta. Cerrala antes de abrir un turno nuevo."
     );
   }
 
   const { data, error } = await supabase
     .from("cash_registers")
-    .insert({ status: "open", total_sales: 0, business_day: businessDay })
+    .insert({
+      status: "open",
+      total_sales: 0,
+      business_day: businessDay,
+      shift,
+    })
     .select()
     .single();
 
@@ -1000,24 +1031,30 @@ export async function getTodayPaidSales(
 
 // Paid sales whose register is closed AND whose business_day falls in
 // [from, to]. Used by /stats so the currently-open register and
-// open/voided orders are excluded.
+// open/voided orders are excluded. Optionally filter by shift.
 export async function getClosedRegisterSalesByBusinessDayRange(
   from: string,
-  to: string
+  to: string,
+  shift?: Shift | null
 ): Promise<Sale[]> {
-  const { data, error } = await supabase
+  let builder = supabase
     .from("sales")
-    .select("*, cash_register:cash_registers!inner(business_day, status)")
+    .select("*, cash_register:cash_registers!inner(business_day, status, shift)")
     .eq("status", "paid")
     .eq("cash_register.status", "closed")
     .gte("cash_register.business_day", from)
-    .lte("cash_register.business_day", to)
-    .order("paid_at", { ascending: false });
+    .lte("cash_register.business_day", to);
+
+  if (shift) {
+    builder = builder.eq("cash_register.shift", shift);
+  }
+
+  const { data, error } = await builder.order("paid_at", { ascending: false });
 
   if (error) throw error;
   return (data || []).map((row) => {
     const typed = row as Sale & {
-      cash_register?: { business_day: string; status: string };
+      cash_register?: { business_day: string; status: string; shift: Shift };
     };
     delete typed.cash_register;
     return typed as Sale;

@@ -40,11 +40,17 @@ create table cash_registers (
   closed_at timestamp with time zone,
   total_sales numeric not null default 0,
   status text not null default 'open' check (status in ('open', 'closed')),
-  business_day date not null
+  business_day date not null,
+  shift text not null check (shift in ('mediodia', 'noche'))
 );
 
-create unique index idx_cash_registers_business_day
-  on cash_registers(business_day);
+create unique index idx_cash_registers_business_day_shift
+  on cash_registers(business_day, shift);
+
+create unique index idx_cash_registers_single_open
+  on cash_registers((1)) where status = 'open';
+
+create index idx_cash_registers_shift on cash_registers(shift);
 
 -- ============================================
 -- Table: sales

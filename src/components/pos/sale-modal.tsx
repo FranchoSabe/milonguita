@@ -9,6 +9,8 @@ import {
   Printer,
   Search,
   Trash,
+  ChefHat,
+  CheckCircle2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -226,6 +228,7 @@ export function SaleModal({
     null
   );
   const [printPlan, setPrintPlan] = useState<PrintPlan | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const printFiredRef = useRef(false);
 
   useEffect(() => {
@@ -515,10 +518,19 @@ export function SaleModal({
         customer_id: customer?.id ?? null,
         customer_name: customerNamePayload,
       });
+      const badge =
+        order.order_number != null
+          ? `#${String(order.order_number).padStart(3, "0")}`
+          : "";
+      setToast(`Orden ${badge} enviada a cocina`);
       setPrintPlan({ comanda: { sale: order, variant: "full" } });
     } catch (err) {
       console.error("Error creating order:", err);
-      alert("Error al guardar la orden. Intentá de nuevo.");
+      alert(
+        `No se pudo guardar la orden.\n\n${
+          err instanceof Error ? err.message : "Error desconocido"
+        }`
+      );
       setSaving(false);
     }
   };
@@ -537,19 +549,29 @@ export function SaleModal({
           customer_name: customerNamePayload,
         });
       }
+      const badge =
+        updated.order_number != null
+          ? `#${String(updated.order_number).padStart(3, "0")}`
+          : "";
       if (deltas.length > 0) {
         const mockSale: Sale = {
           ...updated,
           items: cartItemsToSaleItems(deltas),
           customer_name: customerNamePayload,
         };
+        setToast(`Agregado enviado a cocina · Orden ${badge}`);
         setPrintPlan({ comanda: { sale: mockSale, variant: "delta" } });
       } else {
-        onClose();
+        setToast(`Orden ${badge} actualizada`);
+        setTimeout(() => onClose(), 600);
       }
     } catch (err) {
       console.error("Error updating order:", err);
-      alert("Error al guardar los cambios. Intentá de nuevo.");
+      alert(
+        `No se pudieron guardar los cambios.\n\n${
+          err instanceof Error ? err.message : "Error desconocido"
+        }`
+      );
       setSaving(false);
     }
   };
@@ -909,6 +931,15 @@ export function SaleModal({
 
               {!existingOrder ? (
                 <div className="flex flex-col gap-2">
+                  <Button
+                    onClick={handleSaveNew}
+                    disabled={saving || cart.length === 0}
+                    size="xl"
+                    className="w-full"
+                  >
+                    <ChefHat className="mr-2 h-5 w-5" />
+                    {saving ? "Enviando..." : "Enviar a cocina"}
+                  </Button>
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
@@ -920,53 +951,48 @@ export function SaleModal({
                     </Button>
                     <Button
                       variant="outline"
-                      onClick={handleSaveNew}
-                      disabled={saving || cart.length === 0}
+                      onClick={() => setStep("payment")}
+                      disabled={cart.length === 0 || saving}
                       className="flex-1"
                     >
-                      Guardar orden
+                      Cobrar ahora
                     </Button>
                   </div>
-                  <Button
-                    onClick={() => setStep("payment")}
-                    disabled={cart.length === 0 || saving}
-                    size="lg"
-                    className="w-full"
-                  >
-                    Cobrar
-                  </Button>
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
                   <Button
-                    variant="outline"
-                    onClick={handleReprintComanda}
-                    disabled={saving || cart.length === 0}
-                    className="w-full"
-                  >
-                    <Printer className="mr-2 h-4 w-4" />
-                    Reimprimir comanda
-                  </Button>
-                  <Button
-                    variant="outline"
                     onClick={handleSaveEdit}
                     disabled={
                       saving ||
                       cart.length === 0 ||
                       (!cartHasChanges && !customerChanged)
                     }
+                    size="xl"
                     className="w-full"
                   >
-                    Guardar cambios
+                    <ChefHat className="mr-2 h-5 w-5" />
+                    {saving ? "Enviando..." : "Enviar a cocina"}
                   </Button>
-                  <Button
-                    onClick={() => setStep("payment")}
-                    disabled={cart.length === 0 || saving}
-                    size="lg"
-                    className="w-full"
-                  >
-                    Cobrar
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={handleReprintComanda}
+                      disabled={saving || cart.length === 0}
+                      className="flex-1"
+                    >
+                      <Printer className="mr-2 h-4 w-4" />
+                      Reimprimir
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setStep("payment")}
+                      disabled={cart.length === 0 || saving}
+                      className="flex-1"
+                    >
+                      Cobrar
+                    </Button>
+                  </div>
                   <Button
                     variant="destructive"
                     onClick={handleDeleteOrder}
@@ -1220,6 +1246,19 @@ export function SaleModal({
         onAdd={addPack}
         onClose={() => setPackPickerPack(null)}
       />
+
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-full bg-green-600 px-5 py-3 text-sm font-semibold text-white shadow-xl print:hidden"
+        >
+          <span className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4" />
+            {toast}
+          </span>
+        </div>
+      )}
 
       {printPlan?.comanda && (
         <Comanda
