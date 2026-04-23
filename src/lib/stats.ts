@@ -214,6 +214,7 @@ export function breakdownByPayment(sales: Sale[]): PaymentBreakdown[] {
   };
 
   for (const sale of sales) {
+    if (!sale.payment_method) continue;
     const bucket = buckets[sale.payment_method];
     if (bucket) {
       bucket.revenue += sale.total;

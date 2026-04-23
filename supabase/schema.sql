@@ -55,7 +55,11 @@ create table sales (
   subtotal numeric not null default 0,
   discount numeric not null default 0,
   total numeric not null default 0,
-  payment_method text not null check (payment_method in ('efectivo', 'qr', 'transferencia')),
+  payment_method text check (payment_method in ('efectivo', 'qr', 'transferencia')),
+  status text not null default 'open' check (status in ('open', 'paid', 'voided')),
+  paid_at timestamp with time zone,
+  order_number integer,
+  customer_name text,
   created_at timestamp with time zone default now(),
   cash_register_id uuid references cash_registers(id)
 );
@@ -65,6 +69,10 @@ create table sales (
 -- ============================================
 create index idx_sales_created_at on sales(created_at);
 create index idx_sales_cash_register_id on sales(cash_register_id);
+create unique index idx_sales_register_order_number
+  on sales(cash_register_id, order_number)
+  where order_number is not null;
+create index idx_sales_register_status on sales(cash_register_id, status);
 create index idx_products_active on products(active);
 create index idx_promotions_active on promotions(active);
 create index idx_cash_registers_status on cash_registers(status);

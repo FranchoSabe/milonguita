@@ -51,6 +51,7 @@ function buildMethodTotals(sales: Sale[]): MethodTotal[] {
     },
   };
   for (const sale of sales) {
+    if (!sale.payment_method) continue;
     const bucket = buckets[sale.payment_method];
     if (!bucket) continue;
     bucket.count += 1;

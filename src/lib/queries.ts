@@ -528,109 +528,342 @@ function collectStockDeductions(
   return Array.from(deductions.values());
 }
 
-export async function createSale(sale: {
+// ----- Stock helpers for orders -----
+
+async function getStockEnabledIds(items: CartItem[]): Promise<Set<string>> {
+  const relevantIds = items
+    .flatMap((it) => [
+      it.product_id,
+      ...(it.pack_items?.map((p) => p.product_id) ?? []),
+    ])
+    .filter((id): id is string => Boolean(id));
+  if (relevantIds.length === 0) return new Set();
+  const { data } = await supabase
+    .from("products")
+    .select("id, stock_enabled")
+    .in("id", Array.from(new Set(relevantIds)));
+  return new Set(
+    (data ?? [])
+      .filter((p: Pick<Product, "id" | "stock_enabled">) => p.stock_enabled)
+      .map((p: Pick<Product, "id">) => p.id)
+  );
+}
+
+async function deductStockForOrder(saleId: string, items: CartItem[]) {
+  const enabled = await getStockEnabledIds(items);
+  if (enabled.size === 0) return;
+  const deductions = collectStockDeductions(items, enabled);
+  for (const d of deductions) {
+    await supabase.rpc("apply_stock_movement", {
+      p_product_id: d.product_id,
+      p_movement_type: "sale",
+      p_quantity_delta: -d.quantity,
+      p_reason: d.reason,
+      p_sale_id: saleId,
+    });
+  }
+}
+
+// Undo every stock movement previously written for this order by applying
+// a compensating positive movement per product. Used on void or before
+// re-deducting after an edit.
+async function reverseStockForOrder(saleId: string) {
+  const { data: movements } = await supabase
+    .from("stock_movements")
+    .select("product_id, quantity_delta")
+    .eq("sale_id", saleId);
+  if (!movements || movements.length === 0) return;
+  const netByProduct = new Map<string, number>();
+  for (const m of movements as { product_id: string; quantity_delta: number }[]) {
+    netByProduct.set(
+      m.product_id,
+      (netByProduct.get(m.product_id) ?? 0) + m.quantity_delta
+    );
+  }
+  for (const [productId, net] of Array.from(netByProduct.entries())) {
+    if (net >= 0) continue;
+    await supabase.rpc("apply_stock_movement", {
+      p_product_id: productId,
+      p_movement_type: "correction",
+      p_quantity_delta: -net,
+      p_reason: `Reversión de orden ${saleId.slice(0, 8)}`,
+      p_sale_id: saleId,
+    });
+  }
+}
+
+// ----- Orders (sales lifecycle) -----
+
+async function nextOrderNumber(cashRegisterId: string): Promise<number> {
+  const { data } = await supabase
+    .from("sales")
+    .select("order_number")
+    .eq("cash_register_id", cashRegisterId)
+    .not("order_number", "is", null)
+    .order("order_number", { ascending: false })
+    .limit(1);
+  const last = data?.[0]?.order_number ?? 0;
+  return last + 1;
+}
+
+export async function createOrder(input: {
   items: CartItem[];
-  subtotal: number;
-  discount: number;
-  total: number;
-  payment_method: PaymentMethod;
   cash_register_id: string;
   customer_id?: string | null;
-  points_earned?: number;
-  points_redeemed?: number;
+  customer_name?: string | null;
 }): Promise<Sale> {
-  const saleItems = sale.items.map(cartItemToSaleItem);
+  const saleItems = input.items.map(cartItemToSaleItem);
+  const subtotal = input.items.reduce(
+    (sum, i) => sum + i.price * i.quantity,
+    0
+  );
+
+  const orderNumber = await nextOrderNumber(input.cash_register_id);
 
   const { data, error } = await supabase
     .from("sales")
     .insert({
       items: saleItems,
-      subtotal: sale.subtotal,
-      discount: sale.discount,
-      total: sale.total,
-      payment_method: sale.payment_method,
-      cash_register_id: sale.cash_register_id,
-      customer_id: sale.customer_id ?? null,
-      points_earned: sale.points_earned ?? 0,
-      points_redeemed: sale.points_redeemed ?? 0,
+      subtotal,
+      discount: 0,
+      total: subtotal,
+      payment_method: null,
+      status: "open",
+      order_number: orderNumber,
+      customer_name: input.customer_name ?? null,
+      cash_register_id: input.cash_register_id,
+      customer_id: input.customer_id ?? null,
+      points_earned: 0,
+      points_redeemed: 0,
     })
     .select()
     .single();
 
   if (error) throw error;
 
-  // Deduct stock in a best-effort pass. A failure here should not abort the
-  // sale because the register is already booked; surface the failure to the
-  // caller via console so they can reconcile manually.
   try {
-    const relevantIds = sale.items
-      .flatMap((it) => [
-        it.product_id,
-        ...(it.pack_items?.map((p) => p.product_id) ?? []),
-      ])
-      .filter((id): id is string => Boolean(id));
-
-    if (relevantIds.length > 0) {
-      const { data: products } = await supabase
-        .from("products")
-        .select("id, stock_enabled")
-        .in("id", Array.from(new Set(relevantIds)));
-
-      const enabled = new Set(
-        (products ?? [])
-          .filter((p: Pick<Product, "id" | "stock_enabled">) => p.stock_enabled)
-          .map((p: Pick<Product, "id">) => p.id)
-      );
-
-      const deductions = collectStockDeductions(sale.items, enabled);
-      for (const d of deductions) {
-        await supabase.rpc("apply_stock_movement", {
-          p_product_id: d.product_id,
-          p_movement_type: "sale",
-          p_quantity_delta: -d.quantity,
-          p_reason: d.reason,
-          p_sale_id: data.id,
-        });
-      }
-    }
+    await deductStockForOrder(data.id, input.items);
   } catch (err) {
-    console.error("Stock deduction failed for sale", data.id, err);
+    console.error("Stock deduction failed for order", data.id, err);
   }
 
-  // Apply loyalty side-effects (customer totals + points) in a best-effort pass.
-  if (sale.customer_id) {
+  return data;
+}
+
+export async function updateOrderItems(
+  saleId: string,
+  items: CartItem[]
+): Promise<Sale> {
+  const saleItems = items.map(cartItemToSaleItem);
+  const subtotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+
+  const { data, error } = await supabase
+    .from("sales")
+    .update({
+      items: saleItems,
+      subtotal,
+      total: subtotal,
+      discount: 0,
+    })
+    .eq("id", saleId)
+    .eq("status", "open")
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  try {
+    await reverseStockForOrder(saleId);
+    await deductStockForOrder(saleId, items);
+  } catch (err) {
+    console.error("Stock reconciliation failed for order", saleId, err);
+  }
+
+  return data;
+}
+
+export async function updateOrderCustomer(
+  saleId: string,
+  input: { customer_id: string | null; customer_name: string | null }
+): Promise<Sale> {
+  const { data, error } = await supabase
+    .from("sales")
+    .update({
+      customer_id: input.customer_id,
+      customer_name: input.customer_name,
+    })
+    .eq("id", saleId)
+    .eq("status", "open")
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function voidOpenOrder(saleId: string): Promise<void> {
+  try {
+    await reverseStockForOrder(saleId);
+  } catch (err) {
+    console.error("Stock reversal failed for order", saleId, err);
+  }
+  const { error } = await supabase
+    .from("sales")
+    .update({ status: "voided" })
+    .eq("id", saleId)
+    .eq("status", "open");
+  if (error) throw error;
+}
+
+export async function payOrder(input: {
+  sale_id: string;
+  discount: number;
+  total: number;
+  payment_method: PaymentMethod;
+  customer_id?: string | null;
+  customer_name?: string | null;
+  points_earned?: number;
+  points_redeemed?: number;
+}): Promise<Sale> {
+  const { data, error } = await supabase
+    .from("sales")
+    .update({
+      status: "paid",
+      paid_at: new Date().toISOString(),
+      payment_method: input.payment_method,
+      discount: input.discount,
+      total: input.total,
+      customer_id: input.customer_id ?? null,
+      customer_name: input.customer_name ?? null,
+      points_earned: input.points_earned ?? 0,
+      points_redeemed: input.points_redeemed ?? 0,
+    })
+    .eq("id", input.sale_id)
+    .eq("status", "open")
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  if (input.customer_id) {
     try {
       await supabase.rpc("register_sale_for_customer", {
-        p_customer_id: sale.customer_id,
-        p_sale_id: data.id,
-        p_amount: sale.total,
+        p_customer_id: input.customer_id,
+        p_sale_id: input.sale_id,
+        p_amount: input.total,
       });
-
-      if ((sale.points_earned ?? 0) > 0) {
+      if ((input.points_earned ?? 0) > 0) {
         await supabase.rpc("apply_points_movement", {
-          p_customer_id: sale.customer_id,
+          p_customer_id: input.customer_id,
           p_movement_type: "earn",
-          p_points_delta: sale.points_earned,
-          p_reason: `Venta ${data.id.slice(0, 8)}`,
-          p_sale_id: data.id,
+          p_points_delta: input.points_earned,
+          p_reason: `Venta ${input.sale_id.slice(0, 8)}`,
+          p_sale_id: input.sale_id,
         });
       }
-
-      if ((sale.points_redeemed ?? 0) > 0) {
+      if ((input.points_redeemed ?? 0) > 0) {
         await supabase.rpc("apply_points_movement", {
-          p_customer_id: sale.customer_id,
+          p_customer_id: input.customer_id,
           p_movement_type: "redeem",
-          p_points_delta: -sale.points_redeemed!,
-          p_reason: `Canje en venta ${data.id.slice(0, 8)}`,
-          p_sale_id: data.id,
+          p_points_delta: -input.points_redeemed!,
+          p_reason: `Canje en venta ${input.sale_id.slice(0, 8)}`,
+          p_sale_id: input.sale_id,
         });
       }
     } catch (err) {
-      console.error("Loyalty update failed for sale", data.id, err);
+      console.error("Loyalty update failed for order", input.sale_id, err);
     }
   }
 
   return data;
+}
+
+// Moves a paid order back to open state so the cashier can modify it. The
+// original payment metadata is wiped on purpose (the user explicitly asked
+// not to preserve the prior cobro). Loyalty side-effects are reversed on a
+// best-effort basis; visits cannot be decremented via the existing RPC so
+// that counter may drift slightly if the same customer's order is reopened.
+export async function reopenPaidOrder(saleId: string): Promise<Sale> {
+  const { data: existing, error: fetchErr } = await supabase
+    .from("sales")
+    .select("*")
+    .eq("id", saleId)
+    .eq("status", "paid")
+    .single();
+  if (fetchErr) throw fetchErr;
+  const prior = existing as Sale;
+
+  if (prior.customer_id) {
+    try {
+      await supabase.rpc("register_sale_for_customer", {
+        p_customer_id: prior.customer_id,
+        p_sale_id: saleId,
+        p_amount: -prior.total,
+      });
+      if ((prior.points_earned ?? 0) > 0) {
+        await supabase.rpc("apply_points_movement", {
+          p_customer_id: prior.customer_id,
+          p_movement_type: "adjustment",
+          p_points_delta: -prior.points_earned,
+          p_reason: `Anulación venta ${saleId.slice(0, 8)}`,
+          p_sale_id: saleId,
+        });
+      }
+      if ((prior.points_redeemed ?? 0) > 0) {
+        await supabase.rpc("apply_points_movement", {
+          p_customer_id: prior.customer_id,
+          p_movement_type: "adjustment",
+          p_points_delta: prior.points_redeemed,
+          p_reason: `Reversión canje venta ${saleId.slice(0, 8)}`,
+          p_sale_id: saleId,
+        });
+      }
+    } catch (err) {
+      console.error("Loyalty reversal failed for order", saleId, err);
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("sales")
+    .update({
+      status: "open",
+      payment_method: null,
+      paid_at: null,
+      discount: 0,
+      total: prior.subtotal,
+      points_earned: 0,
+      points_redeemed: 0,
+    })
+    .eq("id", saleId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function getOpenOrders(
+  cashRegisterId: string
+): Promise<Sale[]> {
+  const { data, error } = await supabase
+    .from("sales")
+    .select("*")
+    .eq("cash_register_id", cashRegisterId)
+    .eq("status", "open")
+    .order("order_number", { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function getPaidOrders(
+  cashRegisterId: string
+): Promise<Sale[]> {
+  const { data, error } = await supabase
+    .from("sales")
+    .select("*")
+    .eq("cash_register_id", cashRegisterId)
+    .eq("status", "paid")
+    .order("paid_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
 }
 
 // ============================================
@@ -750,21 +983,60 @@ export async function applyManualPointsAdjustment(input: {
   return Array.isArray(data) ? data[0] : data;
 }
 
-export async function getTodaySales(
+// Paid sales only. Used by Estado de caja for today's totals.
+export async function getTodayPaidSales(
   cashRegisterId: string
 ): Promise<Sale[]> {
   const { data, error } = await supabase
     .from("sales")
     .select("*")
     .eq("cash_register_id", cashRegisterId)
-    .order("created_at", { ascending: false });
+    .eq("status", "paid")
+    .order("paid_at", { ascending: false });
 
   if (error) throw error;
   return data || [];
 }
 
-// Sales whose register is closed AND whose business_day falls in [from, to].
-// Used by /stats so the currently-open register is excluded.
+// DEPRECATED compat alias for the pre-orders UI. Remove once the UI is
+// migrated to openOrders/paidOrders.
+export const getTodaySales = getTodayPaidSales;
+
+// DEPRECATED compat shim for the pre-orders UI. Creates an order and pays
+// it atomically (from the app's point of view) so the legacy SaleModal
+// keeps working until it gets rewritten.
+export async function createSale(sale: {
+  items: CartItem[];
+  subtotal: number;
+  discount: number;
+  total: number;
+  payment_method: PaymentMethod;
+  cash_register_id: string;
+  customer_id?: string | null;
+  points_earned?: number;
+  points_redeemed?: number;
+}): Promise<Sale> {
+  const order = await createOrder({
+    items: sale.items,
+    cash_register_id: sale.cash_register_id,
+    customer_id: sale.customer_id ?? null,
+    customer_name: null,
+  });
+  return payOrder({
+    sale_id: order.id,
+    discount: sale.discount,
+    total: sale.total,
+    payment_method: sale.payment_method,
+    customer_id: sale.customer_id ?? null,
+    customer_name: null,
+    points_earned: sale.points_earned,
+    points_redeemed: sale.points_redeemed,
+  });
+}
+
+// Paid sales whose register is closed AND whose business_day falls in
+// [from, to]. Used by /stats so the currently-open register and
+// open/voided orders are excluded.
 export async function getClosedRegisterSalesByBusinessDayRange(
   from: string,
   to: string
@@ -772,10 +1044,11 @@ export async function getClosedRegisterSalesByBusinessDayRange(
   const { data, error } = await supabase
     .from("sales")
     .select("*, cash_register:cash_registers!inner(business_day, status)")
+    .eq("status", "paid")
     .eq("cash_register.status", "closed")
     .gte("cash_register.business_day", from)
     .lte("cash_register.business_day", to)
-    .order("created_at", { ascending: false });
+    .order("paid_at", { ascending: false });
 
   if (error) throw error;
   return (data || []).map((row) => {

@@ -95,7 +95,7 @@ export function Ticket({ sale, customer }: TicketProps) {
 
       <div className="print-row" style={{ marginTop: 4 }}>
         <span>Pago</span>
-        <span>{paymentMethodLabels[sale.payment_method] ?? sale.payment_method}</span>
+        <span>{sale.payment_method ? paymentMethodLabels[sale.payment_method] ?? sale.payment_method : "-"}</span>
       </div>
 
       {customer && (
@@ -185,7 +185,7 @@ export function TicketPreview({ sale, customer }: TicketProps) {
         <div className="flex justify-between text-xs">
           <span>Pago:</span>
           <span>
-            {paymentMethodLabels[sale.payment_method] ?? sale.payment_method}
+            {sale.payment_method ? paymentMethodLabels[sale.payment_method] ?? sale.payment_method : "-"}
           </span>
         </div>
       </div>

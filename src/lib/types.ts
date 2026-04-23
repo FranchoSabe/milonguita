@@ -117,13 +117,19 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   transferencia: "Transferencia",
 };
 
+export type OrderStatus = "open" | "paid" | "voided";
+
 export interface Sale {
   id: string;
   items: SaleItem[];
   subtotal: number;
   discount: number;
   total: number;
-  payment_method: PaymentMethod;
+  payment_method: PaymentMethod | null;
+  status: OrderStatus;
+  paid_at: string | null;
+  order_number: number | null;
+  customer_name: string | null;
   created_at: string;
   cash_register_id: string;
   customer_id: string | null;
