@@ -622,7 +622,7 @@ export default function StatsPage() {
                           {formatCurrency(sale.total)}
                         </td>
                         <td className="px-4 py-3 capitalize">
-                          {sale.payment_method}
+                          {sale.payment_method ?? "-"}
                         </td>
                       </tr>
                     ))

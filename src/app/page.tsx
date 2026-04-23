@@ -2,13 +2,16 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  ShoppingCart,
   DoorOpen,
   Receipt,
   Lock,
   ArrowLeft,
   Printer,
   X,
+  Plus,
+  ChefHat,
+  CreditCard,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,14 +25,19 @@ import {
 import {
   closeCashRegister,
   getOpenCashRegister,
-  getTodaySales,
+  getOpenOrders,
+  getTodayPaidSales,
   openCashRegister,
+  reopenPaidOrder,
 } from "@/lib/queries";
 import { CashRegister, PAYMENT_METHOD_LABELS, PaymentMethod, Sale } from "@/lib/types";
 import { formatCurrency, formatDate, formatTime } from "@/lib/utils";
 
 type View = "main" | "status";
 type CloseStep = "confirm" | "ticket";
+type ModalState =
+  | { open: false }
+  | { open: true; order: Sale | null; step: "products" | "payment" };
 
 function todayLocalISO(): string {
   const now = new Date();
@@ -49,12 +57,18 @@ function formatBusinessDay(value: string): string {
   });
 }
 
+function formatOrderNumber(n: number | null): string {
+  if (n == null) return "—";
+  return `#${String(n).padStart(3, "0")}`;
+}
+
 const PAYMENT_ORDER: PaymentMethod[] = ["efectivo", "qr", "transferencia"];
 
 export default function HomePage() {
   const [cashRegister, setCashRegister] = useState<CashRegister | null>(null);
-  const [sales, setSales] = useState<Sale[]>([]);
-  const [showSaleModal, setShowSaleModal] = useState(false);
+  const [paidSales, setPaidSales] = useState<Sale[]>([]);
+  const [openOrders, setOpenOrders] = useState<Sale[]>([]);
+  const [modalState, setModalState] = useState<ModalState>({ open: false });
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
   const [openDate, setOpenDate] = useState(todayLocalISO());
@@ -63,16 +77,22 @@ export default function HomePage() {
   const [closeStep, setCloseStep] = useState<CloseStep | null>(null);
   const [closeSummary, setCloseSummary] = useState<CashCloseSummary | null>(null);
   const [closing, setClosing] = useState(false);
+  const [reopeningId, setReopeningId] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     try {
       const register = await getOpenCashRegister();
       setCashRegister(register);
       if (register) {
-        const todaySales = await getTodaySales(register.id);
-        setSales(todaySales);
+        const [paid, open] = await Promise.all([
+          getTodayPaidSales(register.id),
+          getOpenOrders(register.id),
+        ]);
+        setPaidSales(paid);
+        setOpenOrders(open);
       } else {
-        setSales([]);
+        setPaidSales([]);
+        setOpenOrders([]);
       }
     } catch (err) {
       console.error("Error loading data:", err);
@@ -91,7 +111,8 @@ export default function HomePage() {
     try {
       const register = await openCashRegister(openDate);
       setCashRegister(register);
-      setSales([]);
+      setPaidSales([]);
+      setOpenOrders([]);
     } catch (err) {
       console.error("Error opening cash register:", err);
       setOpenError(
@@ -106,6 +127,12 @@ export default function HomePage() {
 
   const startClose = () => {
     if (!cashRegister) return;
+    if (openOrders.length > 0) {
+      alert(
+        `Cerrá o eliminá las ${openOrders.length} orden(es) abierta(s) antes de cerrar la caja.`
+      );
+      return;
+    }
     setCloseStep("confirm");
   };
 
@@ -113,12 +140,12 @@ export default function HomePage() {
     if (!cashRegister) return;
     setClosing(true);
     try {
-      const total = sales.reduce((sum, s) => sum + s.total, 0);
+      const total = paidSales.reduce((sum, s) => sum + s.total, 0);
       const updated = await closeCashRegister(cashRegister.id, total);
       setCloseSummary({
         register: updated,
         closedAt: updated.closed_at ?? new Date().toISOString(),
-        sales,
+        sales: paidSales,
       });
       setCloseStep("ticket");
     } catch (err) {
@@ -134,7 +161,8 @@ export default function HomePage() {
     setCloseSummary(null);
     setView("main");
     setCashRegister(null);
-    setSales([]);
+    setPaidSales([]);
+    setOpenOrders([]);
     setOpenDate(todayLocalISO());
     setOpenError(null);
     loadData();
@@ -147,6 +175,25 @@ export default function HomePage() {
       delete document.body.dataset.printMode;
       finishClose();
     });
+  };
+
+  const handleReopenPaidOrder = async (sale: Sale) => {
+    const label = formatOrderNumber(sale.order_number);
+    const ok = window.confirm(
+      `¿Anular el cobro de la orden ${label}? Volverá a la lista de órdenes abiertas.`
+    );
+    if (!ok) return;
+    setReopeningId(sale.id);
+    try {
+      await reopenPaidOrder(sale.id);
+      await loadData();
+      setView("main");
+    } catch (err) {
+      console.error("Error reopening order:", err);
+      alert("No se pudo anular la venta.");
+    } finally {
+      setReopeningId(null);
+    }
   };
 
   if (loading) {
@@ -201,10 +248,10 @@ export default function HomePage() {
   }
 
   if (view === "status") {
-    const total = sales.reduce((sum, s) => sum + s.total, 0);
-    const avg = sales.length > 0 ? total / sales.length : 0;
+    const total = paidSales.reduce((sum, s) => sum + s.total, 0);
+    const avg = paidSales.length > 0 ? total / paidSales.length : 0;
     const byMethod = PAYMENT_ORDER.map((method) => {
-      const filtered = sales.filter((s) => s.payment_method === method);
+      const filtered = paidSales.filter((s) => s.payment_method === method);
       return {
         method,
         label: PAYMENT_METHOD_LABELS[method],
@@ -240,7 +287,7 @@ export default function HomePage() {
         <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="rounded-xl border bg-white p-4 shadow-sm">
             <p className="text-sm text-gray-500">Ventas</p>
-            <p className="mt-1 text-2xl font-bold">{sales.length}</p>
+            <p className="mt-1 text-2xl font-bold">{paidSales.length}</p>
           </div>
           <div className="rounded-xl border bg-white p-4 shadow-sm">
             <p className="text-sm text-gray-500">Total</p>
@@ -261,7 +308,7 @@ export default function HomePage() {
         </div>
 
         <h2 className="mb-3 text-lg font-semibold">Por método de pago</h2>
-        <div className="space-y-2">
+        <div className="mb-8 space-y-2">
           {byMethod.map((m) => (
             <div
               key={m.method}
@@ -278,6 +325,49 @@ export default function HomePage() {
           ))}
         </div>
 
+        <h2 className="mb-3 text-lg font-semibold">Órdenes cobradas</h2>
+        {paidSales.length === 0 ? (
+          <p className="rounded-lg border border-dashed bg-white px-4 py-6 text-center text-sm text-gray-400">
+            Aún no se cobró ninguna orden.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {paidSales.map((sale) => (
+              <div
+                key={sale.id}
+                className="flex items-center justify-between gap-3 rounded-lg border bg-white px-4 py-3 shadow-sm"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold">
+                    {formatOrderNumber(sale.order_number)}
+                    <span className="ml-2 text-xs font-normal text-gray-500">
+                      {formatTime(sale.paid_at ?? sale.created_at)}
+                    </span>
+                  </p>
+                  <p className="truncate text-xs text-gray-500">
+                    {sale.customer_name ?? "Sin nombre"} ·{" "}
+                    {sale.payment_method
+                      ? PAYMENT_METHOD_LABELS[sale.payment_method]
+                      : "-"}
+                  </p>
+                </div>
+                <p className="whitespace-nowrap font-bold tabular-nums">
+                  {formatCurrency(sale.total)}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleReopenPaidOrder(sale)}
+                  disabled={reopeningId === sale.id}
+                >
+                  <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                  {reopeningId === sale.id ? "Anulando..." : "Anular"}
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {closeStep && renderCloseFlow()}
       </div>
     );
@@ -287,7 +377,7 @@ export default function HomePage() {
     if (!closeStep) return null;
 
     if (closeStep === "confirm") {
-      const total = sales.reduce((sum, s) => sum + s.total, 0);
+      const total = paidSales.reduce((sum, s) => sum + s.total, 0);
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
@@ -301,7 +391,7 @@ export default function HomePage() {
             <p className="mb-4 text-sm text-gray-600">
               Total de la caja:{" "}
               <span className="font-bold">{formatCurrency(total)}</span> (
-              {sales.length} ventas)
+              {paidSales.length} ventas)
             </p>
             <p className="mb-4 text-xs text-gray-500">
               No vas a poder registrar más ventas hasta abrir una nueva caja.
@@ -359,6 +449,8 @@ export default function HomePage() {
     return null;
   }
 
+  const openOrdersTotal = openOrders.reduce((sum, o) => sum + o.subtotal, 0);
+
   return (
     <div className="relative flex min-h-screen flex-col">
       <div className="flex justify-end gap-2 p-3">
@@ -376,25 +468,109 @@ export default function HomePage() {
         </Button>
       </div>
 
-      <div className="flex flex-1 items-center justify-center p-4">
+      <div className="flex flex-1 flex-col items-center gap-6 p-4">
         <Button
-          onClick={() => setShowSaleModal(true)}
+          onClick={() =>
+            setModalState({ open: true, order: null, step: "products" })
+          }
           size="xl"
-          className="h-32 w-64 flex-col gap-3 rounded-2xl text-xl shadow-lg transition-transform hover:scale-105"
+          className="h-24 w-full max-w-md flex-col gap-2 rounded-2xl text-xl shadow-lg transition-transform hover:scale-105"
         >
-          <ShoppingCart className="h-12 w-12" />
-          REGISTRAR VENTA
+          <Plus className="h-8 w-8" />
+          Nueva orden
         </Button>
+
+        <div className="w-full max-w-2xl rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-lg font-semibold">
+              Órdenes abiertas ({openOrders.length})
+            </h2>
+            {openOrders.length > 0 && (
+              <p className="text-sm text-gray-500">
+                Subtotal:{" "}
+                <span className="font-semibold text-gray-700">
+                  {formatCurrency(openOrdersTotal)}
+                </span>
+              </p>
+            )}
+          </div>
+
+          {openOrders.length === 0 ? (
+            <p className="rounded-lg border border-dashed py-8 text-center text-sm text-gray-400">
+              No hay órdenes abiertas. Creá una nueva para comenzar.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {openOrders.map((order) => {
+                const itemCount = order.items.reduce(
+                  (s, it) => s + it.quantity,
+                  0
+                );
+                return (
+                  <div
+                    key={order.id}
+                    className="flex items-center justify-between gap-3 rounded-lg border bg-gray-50 px-4 py-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-base font-bold">
+                        {formatOrderNumber(order.order_number)}
+                        {order.customer_name && (
+                          <span className="ml-2 text-sm font-medium text-gray-700">
+                            · {order.customer_name}
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {itemCount} {itemCount === 1 ? "item" : "items"} ·{" "}
+                        {formatCurrency(order.subtotal)}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setModalState({
+                            open: true,
+                            order,
+                            step: "products",
+                          })
+                        }
+                      >
+                        <ChefHat className="mr-1 h-4 w-4" />
+                        Editar
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() =>
+                          setModalState({
+                            open: true,
+                            order,
+                            step: "payment",
+                          })
+                        }
+                      >
+                        <CreditCard className="mr-1 h-4 w-4" />
+                        Cobrar
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
-      {showSaleModal && (
+      {modalState.open && (
         <SaleModal
           cashRegisterId={cashRegister.id}
+          existingOrder={modalState.order}
+          initialStep={modalState.step}
           onClose={() => {
-            setShowSaleModal(false);
+            setModalState({ open: false });
             loadData();
           }}
-          onSaleComplete={() => loadData()}
         />
       )}
 

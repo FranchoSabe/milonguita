@@ -998,42 +998,6 @@ export async function getTodayPaidSales(
   return data || [];
 }
 
-// DEPRECATED compat alias for the pre-orders UI. Remove once the UI is
-// migrated to openOrders/paidOrders.
-export const getTodaySales = getTodayPaidSales;
-
-// DEPRECATED compat shim for the pre-orders UI. Creates an order and pays
-// it atomically (from the app's point of view) so the legacy SaleModal
-// keeps working until it gets rewritten.
-export async function createSale(sale: {
-  items: CartItem[];
-  subtotal: number;
-  discount: number;
-  total: number;
-  payment_method: PaymentMethod;
-  cash_register_id: string;
-  customer_id?: string | null;
-  points_earned?: number;
-  points_redeemed?: number;
-}): Promise<Sale> {
-  const order = await createOrder({
-    items: sale.items,
-    cash_register_id: sale.cash_register_id,
-    customer_id: sale.customer_id ?? null,
-    customer_name: null,
-  });
-  return payOrder({
-    sale_id: order.id,
-    discount: sale.discount,
-    total: sale.total,
-    payment_method: sale.payment_method,
-    customer_id: sale.customer_id ?? null,
-    customer_name: null,
-    points_earned: sale.points_earned,
-    points_redeemed: sale.points_redeemed,
-  });
-}
-
 // Paid sales whose register is closed AND whose business_day falls in
 // [from, to]. Used by /stats so the currently-open register and
 // open/voided orders are excluded.
