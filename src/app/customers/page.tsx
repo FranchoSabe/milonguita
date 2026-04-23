@@ -5,8 +5,8 @@ import {
   ArrowDown,
   ArrowUp,
   Pencil,
-  Phone,
   Plus,
+  Receipt,
   Trash2,
   Users,
 } from "lucide-react";
@@ -20,6 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { TicketPreview } from "@/components/pos/ticket";
 import {
   applyManualPointsAdjustment,
   createCustomer,
@@ -31,13 +32,15 @@ import {
   updateCustomer,
 } from "@/lib/queries";
 import { Customer, CustomerPointsHistory, Sale } from "@/lib/types";
-import { formatCurrency, formatDateTime, cn } from "@/lib/utils";
-
-const MOVEMENT_LABELS: Record<string, string> = {
-  earn: "Ganó",
-  redeem: "Canjeó",
-  adjustment: "Ajuste",
-};
+import {
+  cn,
+  daysSince,
+  formatCurrency,
+  formatDateTime,
+  formatOrderNumber,
+  relativeLastVisit,
+  whatsappLink,
+} from "@/lib/utils";
 
 interface CustomerFormState {
   name: string;
@@ -53,6 +56,29 @@ const emptyForm: CustomerFormState = {
   notes: "",
 };
 
+type SortMode = "name" | "points" | "last_visit" | "spent";
+
+const SORT_LABELS: Record<SortMode, string> = {
+  name: "Nombre",
+  points: "Puntos",
+  last_visit: "Última visita",
+  spent: "Más gastado",
+};
+
+type HistoryEntry =
+  | {
+      kind: "sale";
+      key: string;
+      createdAt: string;
+      sale: Sale;
+    }
+  | {
+      kind: "adjustment";
+      key: string;
+      createdAt: string;
+      movement: CustomerPointsHistory;
+    };
+
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,12 +88,16 @@ export default function CustomersPage() {
   const [form, setForm] = useState<CustomerFormState>(emptyForm);
   const [saving, setSaving] = useState(false);
 
+  const [sortMode, setSortMode] = useState<SortMode>("name");
+
   const [detail, setDetail] = useState<Customer | null>(null);
   const [history, setHistory] = useState<CustomerPointsHistory[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [adjustDelta, setAdjustDelta] = useState("");
   const [adjustReason, setAdjustReason] = useState("");
   const [adjusting, setAdjusting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [ticketSale, setTicketSale] = useState<Sale | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -95,6 +125,54 @@ export default function CustomersPage() {
     );
     return { total, activePoints };
   }, [customers]);
+
+  const sortedCustomers = useMemo(() => {
+    const list = customers.slice();
+    switch (sortMode) {
+      case "points":
+        list.sort((a, b) => b.points_balance - a.points_balance);
+        break;
+      case "spent":
+        list.sort((a, b) => b.total_spent - a.total_spent);
+        break;
+      case "last_visit":
+        list.sort((a, b) => {
+          const av = a.last_visit_at
+            ? new Date(a.last_visit_at).getTime()
+            : -Infinity;
+          const bv = b.last_visit_at
+            ? new Date(b.last_visit_at).getTime()
+            : -Infinity;
+          return bv - av;
+        });
+        break;
+      case "name":
+      default:
+        list.sort((a, b) => a.name.localeCompare(b.name, "es-AR"));
+        break;
+    }
+    return list;
+  }, [customers, sortMode]);
+
+  const unifiedHistory = useMemo<HistoryEntry[]>(() => {
+    const saleEntries: HistoryEntry[] = sales.map((s) => ({
+      kind: "sale",
+      key: `sale-${s.id}`,
+      createdAt: s.created_at,
+      sale: s,
+    }));
+    const adjustmentEntries: HistoryEntry[] = history
+      .filter((h) => !h.sale_id)
+      .map((h) => ({
+        kind: "adjustment",
+        key: `adj-${h.id}`,
+        createdAt: h.created_at,
+        movement: h,
+      }));
+    return [...saleEntries, ...adjustmentEntries].sort((a, b) =>
+      a.createdAt < b.createdAt ? 1 : -1
+    );
+  }, [sales, history]);
 
   const openNew = () => {
     setEditing(null);
@@ -147,7 +225,7 @@ export default function CustomersPage() {
     try {
       const [h, s] = await Promise.all([
         getCustomerPointsHistory(customer.id),
-        getCustomerSales(customer.id, 20),
+        getCustomerSales(customer.id, 50),
       ]);
       setHistory(h);
       setSales(s);
@@ -158,15 +236,15 @@ export default function CustomersPage() {
 
   const refreshDetail = async () => {
     if (!detail) return;
-    const fresh = customers.find((c) => c.id === detail.id);
     const [h, s] = await Promise.all([
       getCustomerPointsHistory(detail.id),
-      getCustomerSales(detail.id, 20),
+      getCustomerSales(detail.id, 50),
     ]);
     setHistory(h);
     setSales(s);
-    if (fresh) setDetail(fresh);
     await load();
+    const fresh = (await getAllCustomers()).find((c) => c.id === detail.id);
+    if (fresh) setDetail(fresh);
   };
 
   const handleAdjust = async () => {
@@ -195,13 +273,14 @@ export default function CustomersPage() {
   };
 
   const handleDelete = async () => {
-    if (!detail) return;
+    if (!detail || deleting) return;
     if (
       !confirm(
         `¿Eliminar a "${detail.name}"? Se borran también su historial y puntos. No se puede deshacer.`
       )
     )
       return;
+    setDeleting(true);
     try {
       await deleteCustomer(detail.id);
       setDetail(null);
@@ -209,6 +288,8 @@ export default function CustomersPage() {
     } catch (err) {
       console.error("Error deleting customer:", err);
       alert("No se pudo eliminar el cliente.");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -235,12 +316,30 @@ export default function CustomersPage() {
         </div>
       </div>
 
-      <div className="mb-4">
+      <div className="mb-4 space-y-2">
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Buscar por nombre, teléfono o email…"
         />
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-gray-500">Ordenar:</span>
+          {(Object.keys(SORT_LABELS) as SortMode[]).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setSortMode(mode)}
+              className={cn(
+                "rounded-full border px-2.5 py-1 font-medium transition",
+                sortMode === mode
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50"
+              )}
+            >
+              {SORT_LABELS[mode]}
+            </button>
+          ))}
+        </div>
       </div>
 
       {loading ? (
@@ -256,39 +355,66 @@ export default function CustomersPage() {
         </div>
       ) : (
         <div className="space-y-2">
-          {customers.map((customer) => (
-            <button
-              key={customer.id}
-              onClick={() => openDetail(customer)}
-              className="flex w-full items-center justify-between rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-primary/40"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{customer.name}</p>
-                <p className="truncate text-xs text-gray-500">
-                  {customer.phone && (
-                    <span className="inline-flex items-center gap-1 mr-2">
-                      <Phone className="h-3 w-3" />
-                      {customer.phone}
-                    </span>
-                  )}
-                  {customer.visits > 0 && (
-                    <span>
-                      {customer.visits} visita
-                      {customer.visits !== 1 ? "s" : ""}
-                    </span>
-                  )}
-                </p>
-              </div>
-              <div className="ml-2 text-right">
-                <p className="text-lg font-bold text-amber-600 tabular-nums">
-                  {customer.points_balance.toLocaleString("es-AR")}
-                </p>
-                <p className="text-[10px] uppercase tracking-wide text-gray-400">
-                  pts
-                </p>
-              </div>
-            </button>
-          ))}
+          {sortedCustomers.map((customer) => {
+            const dormancy = daysSince(customer.last_visit_at);
+            const waLink = whatsappLink(customer.phone);
+            return (
+              <button
+                key={customer.id}
+                onClick={() => openDetail(customer)}
+                className="flex w-full items-center justify-between rounded-lg border bg-white p-4 text-left shadow-sm transition hover:border-primary/40"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate font-medium">{customer.name}</p>
+                    {dormancy !== null && dormancy >= 30 && (
+                      <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                        {dormancy >= 90 ? "Inactivo" : "Hace rato"}
+                      </span>
+                    )}
+                  </div>
+                  <p className="truncate text-xs text-gray-500">
+                    {customer.phone && (
+                      <span className="mr-2">
+                        {waLink ? (
+                          <a
+                            href={waLink}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-medium text-green-700 hover:underline"
+                          >
+                            {customer.phone}
+                          </a>
+                        ) : (
+                          customer.phone
+                        )}
+                      </span>
+                    )}
+                    {customer.visits > 0 && (
+                      <span>
+                        {customer.visits} visita
+                        {customer.visits !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                    {customer.last_visit_at && (
+                      <span className="ml-1 text-gray-400">
+                        · {relativeLastVisit(customer.last_visit_at)}
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <div className="ml-2 text-right">
+                  <p className="text-lg font-bold text-amber-600 tabular-nums">
+                    {customer.points_balance.toLocaleString("es-AR")}
+                  </p>
+                  <p className="text-[10px] uppercase tracking-wide text-gray-400">
+                    pts
+                  </p>
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -370,7 +496,6 @@ export default function CustomersPage() {
           <DialogHeader>
             <DialogTitle>{detail?.name}</DialogTitle>
             <DialogDescription>
-              {detail?.phone && <span>{detail.phone} · </span>}
               {detail?.visits ?? 0} visita{detail?.visits === 1 ? "" : "s"} ·
               gastado {formatCurrency(detail?.total_spent ?? 0)}
             </DialogDescription>
@@ -378,6 +503,38 @@ export default function CustomersPage() {
 
           {detail && (
             <div className="space-y-5">
+              {(() => {
+                const waLink = whatsappLink(detail.phone);
+                const lastLabel = relativeLastVisit(detail.last_visit_at);
+                if (!detail.phone && !lastLabel) return null;
+                return (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600">
+                    {detail.phone && (
+                      <span>
+                        <span className="text-gray-500">Teléfono: </span>
+                        {waLink ? (
+                          <a
+                            href={waLink}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="font-medium text-green-700 hover:underline"
+                          >
+                            {detail.phone}
+                          </a>
+                        ) : (
+                          <span className="font-medium">{detail.phone}</span>
+                        )}
+                      </span>
+                    )}
+                    {lastLabel && (
+                      <span className="text-xs text-gray-500">
+                        Última visita: {lastLabel}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
+
               <div className="grid grid-cols-3 gap-2">
                 <div className="rounded-lg border bg-white p-3 text-center">
                   <p className="text-[10px] uppercase tracking-wide text-gray-500">
@@ -418,10 +575,11 @@ export default function CustomersPage() {
                   size="sm"
                   variant="destructive"
                   onClick={handleDelete}
+                  disabled={deleting}
                   className="ml-auto"
                 >
                   <Trash2 className="mr-1 h-3 w-3" />
-                  Eliminar
+                  {deleting ? "Eliminando…" : "Eliminar"}
                 </Button>
               </div>
 
@@ -455,34 +613,78 @@ export default function CustomersPage() {
               </section>
 
               <section>
-                <h3 className="mb-2 text-sm font-semibold">
-                  Historial de puntos
-                </h3>
-                {history.length === 0 ? (
+                <h3 className="mb-2 text-sm font-semibold">Historial</h3>
+                {unifiedHistory.length === 0 ? (
                   <p className="py-3 text-sm text-gray-400">
                     Sin movimientos aún.
                   </p>
                 ) : (
                   <div className="space-y-1">
-                    {history.map((h) => {
-                      const positive = h.points_delta > 0;
+                    {unifiedHistory.map((entry) => {
+                      if (entry.kind === "sale") {
+                        const { sale } = entry;
+                        return (
+                          <button
+                            key={entry.key}
+                            onClick={() => setTicketSale(sale)}
+                            className="flex w-full items-center justify-between rounded-md border bg-white px-3 py-2 text-left text-sm transition hover:border-primary/40 hover:bg-primary/5"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="flex items-center gap-2 font-medium">
+                                <Receipt className="h-3 w-3 text-gray-400" />
+                                <span className="font-mono text-xs tabular-nums text-gray-500">
+                                  {formatOrderNumber(sale.order_number)}
+                                </span>
+                                <span className="tabular-nums">
+                                  {formatCurrency(sale.total)}
+                                </span>
+                              </p>
+                              <p className="ml-5 text-xs text-gray-400">
+                                {formatDateTime(sale.created_at)}
+                              </p>
+                            </div>
+                            <div className="ml-2 flex flex-col items-end gap-0.5 text-xs">
+                              {sale.points_earned > 0 && (
+                                <span className="inline-flex items-center gap-0.5 font-semibold text-green-600 tabular-nums">
+                                  <ArrowUp className="h-3 w-3" />
+                                  {sale.points_earned}
+                                </span>
+                              )}
+                              {sale.points_redeemed > 0 && (
+                                <span className="inline-flex items-center gap-0.5 font-semibold text-red-600 tabular-nums">
+                                  <ArrowDown className="h-3 w-3" />
+                                  {sale.points_redeemed}
+                                </span>
+                              )}
+                              {sale.points_earned === 0 &&
+                                sale.points_redeemed === 0 && (
+                                  <span className="text-[10px] text-gray-400">
+                                    sin puntos
+                                  </span>
+                                )}
+                            </div>
+                          </button>
+                        );
+                      }
+
+                      const { movement } = entry;
+                      const positive = movement.points_delta > 0;
                       return (
                         <div
-                          key={h.id}
-                          className="flex items-center justify-between rounded-md border bg-white px-3 py-2 text-sm"
+                          key={entry.key}
+                          className="flex items-center justify-between rounded-md border border-dashed bg-white px-3 py-2 text-sm"
                         >
                           <div>
                             <p className="font-medium">
-                              {MOVEMENT_LABELS[h.movement_type] ||
-                                h.movement_type}
-                              {h.reason && (
+                              Ajuste manual
+                              {movement.reason && (
                                 <span className="ml-1 text-xs text-gray-500">
-                                  · {h.reason}
+                                  · {movement.reason}
                                 </span>
                               )}
                             </p>
                             <p className="text-xs text-gray-400">
-                              {formatDateTime(h.created_at)}
+                              {formatDateTime(movement.created_at)}
                             </p>
                           </div>
                           <span
@@ -496,7 +698,7 @@ export default function CustomersPage() {
                             ) : (
                               <ArrowDown className="h-3 w-3" />
                             )}
-                            {Math.abs(h.points_delta)}
+                            {Math.abs(movement.points_delta)}
                           </span>
                         </div>
                       );
@@ -504,46 +706,27 @@ export default function CustomersPage() {
                   </div>
                 )}
               </section>
-
-              <section>
-                <h3 className="mb-2 text-sm font-semibold">Últimas ventas</h3>
-                {sales.length === 0 ? (
-                  <p className="py-3 text-sm text-gray-400">
-                    Sin ventas asociadas.
-                  </p>
-                ) : (
-                  <div className="space-y-1">
-                    {sales.map((s) => (
-                      <div
-                        key={s.id}
-                        className="flex items-center justify-between rounded-md border bg-white px-3 py-2 text-sm"
-                      >
-                        <div>
-                          <p className="font-medium tabular-nums">
-                            {formatCurrency(s.total)}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {formatDateTime(s.created_at)}
-                          </p>
-                        </div>
-                        <div className="text-right text-xs">
-                          {s.points_earned > 0 && (
-                            <span className="font-medium text-green-600">
-                              +{s.points_earned}
-                            </span>
-                          )}
-                          {s.points_redeemed > 0 && (
-                            <span className="ml-2 font-medium text-red-600">
-                              -{s.points_redeemed}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
             </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Ticket dialog */}
+      <Dialog
+        open={!!ticketSale}
+        onOpenChange={(open) => {
+          if (!open) setTicketSale(null);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              Ticket {ticketSale ? formatOrderNumber(ticketSale.order_number) : ""}
+            </DialogTitle>
+            <DialogDescription>Detalle de la venta</DialogDescription>
+          </DialogHeader>
+          {ticketSale && (
+            <TicketPreview sale={ticketSale} customer={detail} />
           )}
         </DialogContent>
       </Dialog>

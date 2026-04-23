@@ -39,7 +39,7 @@ import {
   SHIFT_LABELS,
   Shift,
 } from "@/lib/types";
-import { cn, formatCurrency, formatDate, formatTime } from "@/lib/utils";
+import { cn, formatCurrency, formatDate, formatOrderNumber, formatTime } from "@/lib/utils";
 
 type View = "main" | "status";
 type CloseStep = "confirm" | "ticket";
@@ -63,11 +63,6 @@ function formatBusinessDay(value: string): string {
     month: "2-digit",
     year: "numeric",
   });
-}
-
-function formatOrderNumber(n: number | null): string {
-  if (n == null) return "—";
-  return `#${String(n).padStart(3, "0")}`;
 }
 
 const PAYMENT_ORDER: PaymentMethod[] = ["efectivo", "qr", "transferencia"];

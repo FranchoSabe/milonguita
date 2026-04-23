@@ -27,11 +27,19 @@ import {
   DateRangeValue,
   defaultRange,
 } from "@/components/stats/date-range-picker";
+import { TicketPreview } from "@/components/pos/ticket";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   getAllCustomers,
   getClosedRegisterSalesByBusinessDayRange,
 } from "@/lib/queries";
-import { Customer, Sale, SaleItem } from "@/lib/types";
+import { Customer, Sale, SaleItem, Shift, SHIFT_LABELS, SHIFTS } from "@/lib/types";
 import {
   bucketByDay,
   breakdownByPayment,
@@ -42,7 +50,7 @@ import {
   rankProducts,
   toISODate,
 } from "@/lib/stats";
-import { cn, formatCurrency, formatDateTime } from "@/lib/utils";
+import { cn, formatCurrency, formatDateTime, formatOrderNumber } from "@/lib/utils";
 
 const PIE_COLORS = ["#f97316", "#10b981", "#6366f1", "#ec4899"];
 
@@ -88,10 +96,12 @@ function StatsSkeleton() {
 
 export default function StatsPage() {
   const [range, setRange] = useState<DateRangeValue>(defaultRange());
+  const [shiftFilter, setShiftFilter] = useState<Shift | null>(null);
   const [sales, setSales] = useState<Sale[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [prevRevenue, setPrevRevenue] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [ticketSale, setTicketSale] = useState<Sale | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -101,17 +111,17 @@ export default function StatsPage() {
       const prev = previousPeriod(fromDate, toDate);
 
       const [s, c, prevSales] = await Promise.all([
-        getClosedRegisterSalesByBusinessDayRange(range.from, range.to),
+        getClosedRegisterSalesByBusinessDayRange(range.from, range.to, shiftFilter),
         getAllCustomers(),
         getClosedRegisterSalesByBusinessDayRange(
           toISODate(prev.from),
-          toISODate(prev.to)
+          toISODate(prev.to),
+          shiftFilter
         ),
       ]);
       setSales(s);
       setCustomers(c);
       setPrevRevenue(prevSales.reduce((sum, x) => sum + x.total, 0));
-      // fromDate / toDate kept for downstream date-bucket helpers below.
       void fromDate;
       void toDate;
     } catch (err) {
@@ -119,7 +129,7 @@ export default function StatsPage() {
     } finally {
       setLoading(false);
     }
-  }, [range.from, range.to]);
+  }, [range.from, range.to, shiftFilter]);
 
   useEffect(() => {
     load();
@@ -214,7 +224,26 @@ export default function StatsPage() {
     <div className="p-4">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">Estadísticas</h1>
-        <DateRangePicker value={range} onChange={setRange} />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 text-xs">
+            {([null, ...SHIFTS] as (Shift | null)[]).map((shift) => (
+              <button
+                key={shift ?? "all"}
+                type="button"
+                onClick={() => setShiftFilter(shift)}
+                className={cn(
+                  "rounded-full border px-2.5 py-1 font-medium transition",
+                  shiftFilter === shift
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50"
+                )}
+              >
+                {shift === null ? "Todos" : SHIFT_LABELS[shift]}
+              </button>
+            ))}
+          </div>
+          <DateRangePicker value={range} onChange={setRange} />
+        </div>
       </div>
 
       {loading ? (
@@ -581,6 +610,9 @@ export default function StatsPage() {
                 <thead className="border-b bg-gray-50">
                   <tr>
                     <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      N°
+                    </th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">
                       Fecha
                     </th>
                     <th className="px-4 py-3 text-left font-medium text-gray-500">
@@ -598,7 +630,7 @@ export default function StatsPage() {
                   {sales.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={4}
+                        colSpan={5}
                         className="px-4 py-8 text-center text-gray-400"
                       >
                         No hay ventas en este rango.
@@ -606,7 +638,14 @@ export default function StatsPage() {
                     </tr>
                   ) : (
                     sales.map((sale) => (
-                      <tr key={sale.id} className="hover:bg-gray-50">
+                      <tr
+                        key={sale.id}
+                        onClick={() => setTicketSale(sale)}
+                        className="cursor-pointer hover:bg-primary/5"
+                      >
+                        <td className="whitespace-nowrap px-4 py-3 font-mono text-xs tabular-nums text-gray-500">
+                          {formatOrderNumber(sale.order_number)}
+                        </td>
                         <td className="whitespace-nowrap px-4 py-3">
                           {formatDateTime(sale.created_at)}
                         </td>
@@ -633,6 +672,32 @@ export default function StatsPage() {
           </section>
         </>
       )}
+
+      <Dialog
+        open={!!ticketSale}
+        onOpenChange={(open) => {
+          if (!open) setTicketSale(null);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              Ticket {ticketSale ? formatOrderNumber(ticketSale.order_number) : ""}
+            </DialogTitle>
+            <DialogDescription>Detalle de la venta</DialogDescription>
+          </DialogHeader>
+          {ticketSale && (
+            <TicketPreview
+              sale={ticketSale}
+              customer={
+                ticketSale.customer_id
+                  ? customerMap.get(ticketSale.customer_id) ?? null
+                  : null
+              }
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

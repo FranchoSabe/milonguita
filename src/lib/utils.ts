@@ -43,3 +43,43 @@ export function getStoreName(): string {
   if (typeof window === "undefined") return "Mi Local";
   return localStorage.getItem("store_name") || "Mi Local";
 }
+
+export function formatOrderNumber(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return `#${String(n).padStart(3, "0")}`;
+}
+
+/**
+ * Builds a wa.me URL for a phone number.
+ * Assumes Argentina (54) + mobile prefix (9) when the number is local.
+ */
+export function whatsappLink(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "").replace(/^0+/, "");
+  if (digits.length < 6) return null;
+  const normalized = digits.startsWith("54") ? digits : `549${digits}`;
+  return `https://wa.me/${normalized}`;
+}
+
+export function daysSince(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 86_400_000));
+}
+
+export function relativeLastVisit(
+  iso: string | null | undefined
+): string | null {
+  const days = daysSince(iso);
+  if (days === null) return null;
+  if (days === 0) return "hoy";
+  if (days === 1) return "ayer";
+  if (days < 30) return `hace ${days} días`;
+  const months = Math.floor(days / 30);
+  if (months === 1) return "hace 1 mes";
+  if (months < 12) return `hace ${months} meses`;
+  const years = Math.floor(days / 365);
+  if (years === 1) return "hace 1 año";
+  return `hace ${years} años`;
+}
