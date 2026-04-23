@@ -14,8 +14,11 @@ const paymentMethodLabels: Record<string, string> = {
   transferencia: "Transferencia",
 };
 
-function shortSaleId(id: string): string {
-  return id.slice(0, 8).toUpperCase();
+function orderLabel(sale: Sale): string {
+  if (sale.order_number != null) {
+    return `#${String(sale.order_number).padStart(3, "0")}`;
+  }
+  return `#${sale.id.slice(0, 8).toUpperCase()}`;
 }
 
 function formatOptions(item: SaleItem): string | null {
@@ -34,11 +37,16 @@ export function Ticket({ sale, customer }: TicketProps) {
     <div data-print-slot="ticket">
       <div className="ticket-title">{storeName}</div>
       <div className="print-center print-muted">
-        {formatDateTime(sale.created_at)}
+        {formatDateTime(sale.paid_at ?? sale.created_at)}
       </div>
       <div className="print-center print-muted">
-        Ticket #{shortSaleId(sale.id)}
+        Orden {orderLabel(sale)}
       </div>
+      {sale.customer_name && (
+        <div className="print-center print-bold" style={{ marginTop: 2 }}>
+          {sale.customer_name}
+        </div>
+      )}
 
       <div className="print-divider" />
 
@@ -131,11 +139,14 @@ export function TicketPreview({ sale, customer }: TicketProps) {
       <div className="mb-3 border-b border-dashed pb-3 text-center">
         <p className="text-base font-bold">{storeName}</p>
         <p className="text-xs text-gray-500">
-          {formatDateTime(sale.created_at)}
+          {formatDateTime(sale.paid_at ?? sale.created_at)}
         </p>
         <p className="text-[10px] text-gray-400">
-          Ticket #{shortSaleId(sale.id)}
+          Orden {orderLabel(sale)}
         </p>
+        {sale.customer_name && (
+          <p className="mt-1 text-xs font-semibold">{sale.customer_name}</p>
+        )}
       </div>
 
       <div className="mb-3 space-y-1 border-b border-dashed pb-3">
