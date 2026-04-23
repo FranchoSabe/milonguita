@@ -9,7 +9,6 @@ import {
   Printer,
   X,
   Plus,
-  ChefHat,
   CreditCard,
   RotateCcw,
 } from "lucide-react";
@@ -585,10 +584,27 @@ export default function HomePage() {
                   (s, it) => s + it.quantity,
                   0
                 );
+                const previewItems = order.items.slice(0, 3);
+                const remainingItems = order.items.length - previewItems.length;
+                const openForEdit = () =>
+                  setModalState({
+                    open: true,
+                    order,
+                    step: "products",
+                  });
                 return (
                   <div
                     key={order.id}
-                    className="flex items-center justify-between gap-3 rounded-lg border bg-gray-50 px-4 py-3"
+                    role="button"
+                    tabIndex={0}
+                    onClick={openForEdit}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openForEdit();
+                      }
+                    }}
+                    className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border bg-gray-50 px-4 py-3 text-left transition-all hover:border-primary hover:bg-white hover:shadow-sm active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-primary/40"
                   >
                     <div className="min-w-0 flex-1">
                       <p className="text-base font-bold">
@@ -601,35 +617,62 @@ export default function HomePage() {
                       </p>
                       <p className="text-xs text-gray-500">
                         {itemCount} {itemCount === 1 ? "item" : "items"} ·{" "}
-                        {formatCurrency(order.subtotal)}
+                        <span className="font-semibold text-gray-700">
+                          {formatCurrency(order.subtotal)}
+                        </span>
                       </p>
+                      {previewItems.length > 0 && (
+                        <ul className="mt-2 space-y-0.5 text-sm text-gray-700">
+                          {previewItems.map((it, idx) => (
+                            <li key={idx} className="truncate">
+                              <span className="font-semibold text-primary">
+                                {it.quantity}×
+                              </span>{" "}
+                              {it.name}
+                            </li>
+                          ))}
+                          {remainingItems > 0 && (
+                            <li className="text-xs text-gray-400">
+                              + {remainingItems}{" "}
+                              {remainingItems === 1 ? "ítem más" : "ítems más"}
+                            </li>
+                          )}
+                        </ul>
+                      )}
                     </div>
-                    <div className="flex gap-2">
+                    <div
+                      className="flex flex-col items-stretch gap-2 sm:flex-row"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <Button
                         variant="outline"
-                        size="sm"
-                        onClick={() =>
+                        size="lg"
+                        aria-label="Agregar productos"
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setModalState({
                             open: true,
                             order,
                             step: "products",
-                          })
-                        }
+                          });
+                        }}
+                        className="h-12 w-12 p-0"
                       >
-                        <ChefHat className="mr-1 h-4 w-4" />
-                        Editar
+                        <Plus className="h-6 w-6" />
                       </Button>
                       <Button
-                        size="sm"
-                        onClick={() =>
+                        size="lg"
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setModalState({
                             open: true,
                             order,
                             step: "payment",
-                          })
-                        }
+                          });
+                        }}
+                        className="h-12"
                       >
-                        <CreditCard className="mr-1 h-4 w-4" />
+                        <CreditCard className="mr-1 h-5 w-5" />
                         Cobrar
                       </Button>
                     </div>
