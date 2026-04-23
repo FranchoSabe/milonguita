@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   DoorOpen,
   Receipt,
@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SaleModal } from "@/components/pos/sale-modal";
+import { Ticket } from "@/components/pos/ticket";
 import {
   CashCloseSummary,
   CashCloseTicket,
@@ -82,6 +83,8 @@ export default function HomePage() {
   const [closeSummary, setCloseSummary] = useState<CashCloseSummary | null>(null);
   const [closing, setClosing] = useState(false);
   const [reopeningId, setReopeningId] = useState<string | null>(null);
+  const [ticketToPrint, setTicketToPrint] = useState<Sale | null>(null);
+  const ticketPrintFiredRef = useRef(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -108,6 +111,40 @@ export default function HomePage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!ticketToPrint) return;
+    if (ticketPrintFiredRef.current) return;
+    ticketPrintFiredRef.current = true;
+
+    document.body.dataset.printMode = "ticket";
+    requestAnimationFrame(() => {
+      try {
+        window.print();
+      } catch {
+        // Print may fail silently on some devices
+      }
+      delete document.body.dataset.printMode;
+      setTimeout(() => {
+        setTicketToPrint(null);
+        ticketPrintFiredRef.current = false;
+      }, 400);
+    });
+  }, [ticketToPrint]);
+
+  const handlePrintTicket = (order: Sale) => {
+    // For an open (unpaid) order, total = subtotal because no discount/points applied yet.
+    // This acts as a pre-bill ("la cuenta") that the customer can review before paying.
+    const mockSale: Sale = {
+      ...order,
+      total: order.subtotal,
+      discount: 0,
+      points_earned: 0,
+      points_redeemed: 0,
+      payment_method: null,
+    };
+    setTicketToPrint(mockSale);
+  };
 
   const handleOpenCashRegister = async () => {
     setOpening(true);
@@ -647,18 +684,14 @@ export default function HomePage() {
                       <Button
                         variant="outline"
                         size="lg"
-                        aria-label="Agregar productos"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setModalState({
-                            open: true,
-                            order,
-                            step: "products",
-                          });
+                          handlePrintTicket(order);
                         }}
-                        className="h-12 w-12 p-0"
+                        className="h-12"
                       >
-                        <Plus className="h-6 w-6" />
+                        <Printer className="mr-1 h-5 w-5" />
+                        Ticket
                       </Button>
                       <Button
                         size="lg"
@@ -697,6 +730,8 @@ export default function HomePage() {
       )}
 
       {closeStep && renderCloseFlow()}
+
+      {ticketToPrint && <Ticket sale={ticketToPrint} />}
     </div>
   );
 }
