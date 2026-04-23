@@ -463,6 +463,13 @@ export function SaleModal({
     setRedeemPoints(0);
   }, [customer?.id]);
 
+  // Auto-clear toast after 2.5 seconds.
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
   // Sequence comanda then ticket, then onClose.
   useEffect(() => {
     if (!printPlan) return;
@@ -473,9 +480,13 @@ export function SaleModal({
       new Promise((resolve) => {
         document.body.dataset.printMode = mode;
         requestAnimationFrame(() => {
-          window.print();
+          try {
+            window.print();
+          } catch {
+            // Print may fail silently on some devices
+          }
           delete document.body.dataset.printMode;
-          setTimeout(resolve, 300);
+          setTimeout(resolve, 400);
         });
       });
 
@@ -524,12 +535,15 @@ export function SaleModal({
           : "";
       setToast(`Orden ${badge} enviada a cocina`);
       setPrintPlan({ comanda: { sale: order, variant: "full" } });
-    } catch (err) {
+    } catch (err: unknown) {
       console.error("Error creating order:", err);
+      const supaErr = err as { code?: string; message?: string; details?: string };
+      const hint =
+        supaErr.code === "PGRST204" || supaErr.code === "42703"
+          ? "\n\nPosible causa: faltan columnas en la base de datos. Aplicá la migración 005 y 006 en el SQL Editor de Supabase."
+          : "";
       alert(
-        `No se pudo guardar la orden.\n\n${
-          err instanceof Error ? err.message : "Error desconocido"
-        }`
+        `No se pudo guardar la orden.\n\n${supaErr.message ?? "Error desconocido"}${hint}`
       );
       setSaving(false);
     }
