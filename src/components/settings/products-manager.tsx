@@ -1,7 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, Package, GripVertical } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Package,
+  GripVertical,
+  Copy,
+  ChevronsUpDown,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,6 +40,35 @@ import {
 } from "@/lib/types";
 import { formatCurrency, cn } from "@/lib/utils";
 
+function newTempId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/** Trim + primera letra en mayúsculas (locale es). */
+function normalizeCategory(raw: string): string {
+  const t = raw.trim();
+  if (!t) return "";
+  return t.charAt(0).toLocaleUpperCase("es") + t.slice(1);
+}
+
+type DraftOption = {
+  tempId: string;
+  name: string;
+  price_delta: number;
+  is_default: boolean;
+};
+
+type DraftGroup = {
+  tempId: string;
+  name: string;
+  selection_type: OptionGroupSelectionType;
+  required: boolean;
+  options: DraftOption[];
+};
+
 interface ProductFormState {
   name: string;
   category: string;
@@ -52,12 +89,138 @@ const emptyForm: ProductFormState = {
   active: true,
 };
 
+interface CategoryComboboxProps {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  categories: string[];
+}
+
+function CategoryCombobox({
+  id,
+  label,
+  value,
+  onChange,
+  categories,
+}: CategoryComboboxProps) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  const q = query.trim();
+  const qLower = q.toLowerCase();
+  const filtered = useMemo(() => {
+    if (!q) return categories;
+    return categories.filter((c) => c.toLowerCase().includes(qLower));
+  }, [categories, q, qLower]);
+
+  const hasExactMatch =
+    q.length > 0 &&
+    categories.some((c) => c.toLowerCase() === qLower);
+
+  const showCreate =
+    q.length > 0 && !hasExactMatch;
+
+  const displayLabel = value || "Elegir o crear categoría…";
+
+  return (
+    <div className="relative" ref={rootRef}>
+      <Label htmlFor={id}>{label}</Label>
+      <button
+        type="button"
+        id={id}
+        onClick={() => {
+          setOpen((o) => !o);
+          setQuery(value);
+        }}
+        className={cn(
+          "mt-1 flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-left text-sm ring-offset-background",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+          !value && "text-muted-foreground"
+        )}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+      >
+        <span className="truncate">{displayLabel}</span>
+        <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+      </button>
+      {open && (
+        <div
+          className="absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-auto rounded-md border bg-popover text-popover-foreground shadow-md"
+          role="listbox"
+        >
+          <div className="sticky top-0 border-b bg-background p-2">
+            <Input
+              autoFocus
+              placeholder="Buscar o escribir nueva…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="h-8"
+            />
+          </div>
+          <div className="p-1">
+            {filtered.length === 0 && !showCreate && (
+              <p className="px-2 py-2 text-xs text-muted-foreground">
+                No hay coincidencias.
+              </p>
+            )}
+            {filtered.map((c) => (
+              <button
+                key={c}
+                type="button"
+                role="option"
+                aria-selected={value === c}
+                className="flex w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  onChange(c);
+                  setOpen(false);
+                  setQuery("");
+                }}
+              >
+                {c}
+              </button>
+            ))}
+            {showCreate && (
+              <button
+                type="button"
+                role="option"
+                aria-selected={false}
+                className="mt-1 flex w-full rounded-sm border-t px-2 py-2 text-left text-sm font-medium text-primary hover:bg-accent"
+                onClick={() => {
+                  onChange(normalizeCategory(q));
+                  setOpen(false);
+                  setQuery("");
+                }}
+              >
+                Crear categoría: &quot;{normalizeCategory(q)}&quot;
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ProductsManager() {
   const [products, setProducts] = useState<ProductWithOptions[]>([]);
   const [loading, setLoading] = useState(true);
   const [showDialog, setShowDialog] = useState(false);
   const [editing, setEditing] = useState<ProductWithOptions | null>(null);
   const [form, setForm] = useState<ProductFormState>(emptyForm);
+  const [draftGroups, setDraftGroups] = useState<DraftGroup[]>([]);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -95,14 +258,22 @@ export function ProductsManager() {
     );
   }, [products]);
 
+  const resetModalState = useCallback(() => {
+    setEditing(null);
+    setForm(emptyForm);
+    setDraftGroups([]);
+  }, []);
+
   const openNew = () => {
     setEditing(null);
     setForm(emptyForm);
+    setDraftGroups([]);
     setShowDialog(true);
   };
 
   const openEdit = (product: ProductWithOptions) => {
     setEditing(product);
+    setDraftGroups([]);
     setForm({
       name: product.name,
       category: product.category || "",
@@ -115,19 +286,32 @@ export function ProductsManager() {
     setShowDialog(true);
   };
 
+  const handleDialogOpenChange = (open: boolean) => {
+    setShowDialog(open);
+    if (!open) {
+      resetModalState();
+    }
+  };
+
+  const buildPayload = () => {
+    const catRaw = form.category.trim();
+    const category = catRaw ? normalizeCategory(catRaw) : null;
+    return {
+      name: form.name.trim(),
+      price: Number(form.price),
+      category,
+      description: form.description.trim() || null,
+      points: Number(form.points) || 0,
+      stock_enabled: form.stockEnabled,
+      active: editing ? form.active : true,
+    };
+  };
+
   const handleSave = async () => {
     if (!form.name || !form.price) return;
     setSaving(true);
     try {
-      const payload = {
-        name: form.name.trim(),
-        price: Number(form.price),
-        category: form.category.trim() || null,
-        description: form.description.trim() || null,
-        points: Number(form.points) || 0,
-        stock_enabled: form.stockEnabled,
-        active: form.active,
-      };
+      const payload = buildPayload();
 
       if (editing) {
         const updated = await updateProduct(editing.id, payload);
@@ -136,19 +320,125 @@ export function ProductsManager() {
           ...updated,
           option_groups: editing.option_groups,
         });
+        await load();
       } else {
         const created = await createProduct(payload);
-        const newWithOptions: ProductWithOptions = {
-          ...created,
-          option_groups: [],
-        };
-        setEditing(newWithOptions);
-        setProducts((prev) => [...prev, newWithOptions]);
+        try {
+          for (let gi = 0; gi < draftGroups.length; gi++) {
+            const dg = draftGroups[gi];
+            const name = dg.name.trim();
+            if (!name) continue;
+            const newGroup = await createOptionGroup({
+              product_id: created.id,
+              name,
+              selection_type: dg.selection_type,
+              required: dg.required,
+              display_order: gi,
+            });
+            for (let oi = 0; oi < dg.options.length; oi++) {
+              const opt = dg.options[oi];
+              const oname = opt.name.trim();
+              if (!oname) continue;
+              await createOption({
+                group_id: newGroup.id,
+                name: oname,
+                price_delta: Number(opt.price_delta) || 0,
+                is_default: opt.is_default,
+                display_order: oi,
+              });
+            }
+          }
+        } catch (cascadeErr) {
+          console.error("Error creating variants after product:", cascadeErr);
+          alert(
+            "El producto se guardó pero hubo un error al crear algunas variantes. Podés editarlo para completarlas."
+          );
+          await load();
+          const freshList = await getProductsWithOptions();
+          const fresh = freshList.find((p) => p.id === created.id);
+          if (fresh) {
+            setEditing(fresh);
+            setForm({
+              name: fresh.name,
+              category: fresh.category || "",
+              price: fresh.price.toString(),
+              description: fresh.description || "",
+              points: fresh.points?.toString() || "0",
+              stockEnabled: fresh.stock_enabled,
+              active: fresh.active,
+            });
+            setDraftGroups([]);
+          }
+          return;
+        }
+        await load();
+        setShowDialog(false);
+        resetModalState();
       }
-      await load();
     } catch (err) {
       console.error("Error saving product:", err);
       alert("Error al guardar el producto.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDuplicate = async () => {
+    if (!editing) return;
+    setSaving(true);
+    try {
+      const created = await createProduct({
+        name: `${editing.name} (copia)`,
+        price: editing.price,
+        category: editing.category,
+        description: editing.description,
+        points: editing.points ?? 0,
+        stock_enabled: editing.stock_enabled,
+        active: false,
+        display_order: editing.display_order,
+      });
+
+      for (let gi = 0; gi < editing.option_groups.length; gi++) {
+        const g = editing.option_groups[gi];
+        const newGroup = await createOptionGroup({
+          product_id: created.id,
+          name: g.name,
+          selection_type: g.selection_type,
+          required: g.required,
+          display_order: g.display_order ?? gi,
+        });
+        const opts = g.options ?? [];
+        for (let oi = 0; oi < opts.length; oi++) {
+          const o = opts[oi];
+          await createOption({
+            group_id: newGroup.id,
+            name: o.name,
+            price_delta: o.price_delta,
+            is_default: o.is_default,
+            display_order: o.display_order ?? oi,
+          });
+        }
+      }
+
+      await load();
+      const freshList = await getProductsWithOptions();
+      const fresh = freshList.find((p) => p.id === created.id);
+      if (fresh) {
+        setEditing(fresh);
+        setDraftGroups([]);
+        setForm({
+          name: fresh.name,
+          category: fresh.category || "",
+          price: fresh.price.toString(),
+          description: fresh.description || "",
+          points: fresh.points?.toString() || "0",
+          stockEnabled: fresh.stock_enabled,
+          active: fresh.active,
+        });
+      }
+    } catch (err) {
+      console.error("Error duplicating product:", err);
+      alert("Error al duplicar el producto.");
     } finally {
       setSaving(false);
     }
@@ -160,6 +450,7 @@ export function ProductsManager() {
     try {
       await deleteProduct(editing.id);
       setShowDialog(false);
+      resetModalState();
       await load();
     } catch (err) {
       console.error("Error deleting product:", err);
@@ -237,7 +528,7 @@ export function ProductsManager() {
         </div>
       )}
 
-      <Dialog open={showDialog} onOpenChange={setShowDialog}>
+      <Dialog open={showDialog} onOpenChange={handleDialogOpenChange}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
@@ -246,13 +537,13 @@ export function ProductsManager() {
             <DialogDescription>
               {editing
                 ? "Modificá los datos y las variantes del producto."
-                : "Completá los datos y guardá para poder agregar variantes."}
+                : "Completá nombre, categoría y precio; podés armar variantes antes de guardar (todo en un solo paso)."}
             </DialogDescription>
           </DialogHeader>
 
           <section className="space-y-4">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
-              Datos del producto
+              Datos básicos
             </h3>
 
             <div>
@@ -264,27 +555,20 @@ export function ProductsManager() {
                   setForm((f) => ({ ...f, name: e.target.value }))
                 }
                 placeholder="Ej: Pizza muzzarella"
+                className="mt-1"
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="product-category">Categoría</Label>
-                <Input
-                  id="product-category"
-                  value={form.category}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, category: e.target.value }))
-                  }
-                  placeholder="Ej: Pizzas"
-                  list="category-suggestions"
-                />
-                <datalist id="category-suggestions">
-                  {categories.map((c) => (
-                    <option key={c} value={c} />
-                  ))}
-                </datalist>
-              </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <CategoryCombobox
+                id="product-category"
+                label="Categoría"
+                value={form.category}
+                onChange={(category) =>
+                  setForm((f) => ({ ...f, category }))
+                }
+                categories={categories}
+              />
               <div>
                 <Label htmlFor="product-price">Precio base</Label>
                 <Input
@@ -297,101 +581,13 @@ export function ProductsManager() {
                     setForm((f) => ({ ...f, price: e.target.value }))
                   }
                   placeholder="5500"
+                  className="mt-1"
                 />
               </div>
-            </div>
-
-            <div>
-              <Label htmlFor="product-description">
-                Descripción (opcional)
-              </Label>
-              <Input
-                id="product-description"
-                value={form.description}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, description: e.target.value }))
-                }
-                placeholder="Ej: salsa de tomate, mozzarella, orégano"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="product-points">
-                  Puntos de fidelidad por unidad
-                </Label>
-                <Input
-                  id="product-points"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={form.points}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, points: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="flex flex-col justify-end gap-2">
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={form.stockEnabled}
-                    onChange={(e) =>
-                      setForm((f) => ({
-                        ...f,
-                        stockEnabled: e.target.checked,
-                      }))
-                    }
-                    className="h-4 w-4"
-                  />
-                  <span className="text-sm">Controlar stock</span>
-                </label>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={form.active}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, active: e.target.checked }))
-                    }
-                    className="h-4 w-4"
-                  />
-                  <span className="text-sm">Activo (se muestra en venta)</span>
-                </label>
-              </div>
-            </div>
-
-            {editing?.stock_enabled && (
-              <p className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-700">
-                Stock actual: <strong>{editing.stock}</strong>. Ajustalo desde
-                la sección Stock.
-              </p>
-            )}
-
-            <div className="flex gap-2 pt-2">
-              <Button
-                onClick={handleSave}
-                disabled={saving || !form.name || !form.price}
-                className="flex-1"
-              >
-                {saving
-                  ? "Guardando..."
-                  : editing
-                    ? "Guardar cambios"
-                    : "Guardar producto"}
-              </Button>
-              {editing && (
-                <Button
-                  variant="destructive"
-                  onClick={handleDelete}
-                  disabled={saving}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              )}
             </div>
           </section>
 
-          {editing && (
+          {editing ? (
             <OptionGroupsEditor
               product={editing}
               onChange={async () => {
@@ -402,7 +598,132 @@ export function ProductsManager() {
                 if (fresh) setEditing(fresh);
               }}
             />
+          ) : (
+            <DraftOptionGroupsEditor
+              groups={draftGroups}
+              setGroups={setDraftGroups}
+            />
           )}
+
+          <details className="group rounded-lg border border-dashed bg-muted/30 px-3 py-2">
+            <summary className="cursor-pointer list-none text-sm font-medium text-gray-700 [&::-webkit-details-marker]:hidden">
+              <span className="inline-flex items-center gap-2">
+                Más opciones
+                <span className="text-xs font-normal text-muted-foreground">
+                  (descripción, puntos, stock
+                  {editing ? ", visible en venta" : ""})
+                </span>
+              </span>
+            </summary>
+            <div className="mt-4 space-y-4 border-t pt-4">
+              <div>
+                <Label htmlFor="product-description">
+                  Descripción (opcional)
+                </Label>
+                <Input
+                  id="product-description"
+                  value={form.description}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, description: e.target.value }))
+                  }
+                  placeholder="Ej: salsa de tomate, mozzarella, orégano"
+                  className="mt-1"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <Label htmlFor="product-points">
+                    Puntos de fidelidad por unidad
+                  </Label>
+                  <Input
+                    id="product-points"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={form.points}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, points: e.target.value }))
+                    }
+                    className="mt-1"
+                  />
+                </div>
+                <div className="flex flex-col justify-end gap-2">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={form.stockEnabled}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          stockEnabled: e.target.checked,
+                        }))
+                      }
+                      className="h-4 w-4"
+                    />
+                    <span className="text-sm">Controlar stock</span>
+                  </label>
+                  {editing && (
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={form.active}
+                        onChange={(e) =>
+                          setForm((f) => ({ ...f, active: e.target.checked }))
+                        }
+                        className="h-4 w-4"
+                      />
+                      <span className="text-sm">
+                        Activo (se muestra en venta)
+                      </span>
+                    </label>
+                  )}
+                </div>
+              </div>
+
+              {editing?.stock_enabled && (
+                <p className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  Stock actual: <strong>{editing.stock}</strong>. Ajustalo desde
+                  la sección Stock.
+                </p>
+              )}
+            </div>
+          </details>
+
+          <div className="flex flex-wrap gap-2 border-t pt-4">
+            <Button
+              onClick={handleSave}
+              disabled={saving || !form.name || !form.price}
+              className="min-w-0 flex-1"
+            >
+              {saving
+                ? "Guardando..."
+                : editing
+                  ? "Guardar cambios"
+                  : "Guardar producto"}
+            </Button>
+            {editing && (
+              <>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleDuplicate}
+                  disabled={saving}
+                  title="Copiar producto y variantes (inactivo hasta que lo actives)"
+                >
+                  <Copy className="mr-1 h-4 w-4" />
+                  Duplicar
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={saving}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
@@ -481,6 +802,332 @@ function OptionGroupsEditor({ product, onChange }: OptionGroupsEditorProps) {
         </div>
       )}
     </section>
+  );
+}
+
+interface DraftOptionGroupsEditorProps {
+  groups: DraftGroup[];
+  setGroups: React.Dispatch<React.SetStateAction<DraftGroup[]>>;
+}
+
+function DraftOptionGroupsEditor({
+  groups,
+  setGroups,
+}: DraftOptionGroupsEditorProps) {
+  const [newGroupName, setNewGroupName] = useState("");
+
+  const handleAddGroup = () => {
+    const name = newGroupName.trim();
+    if (!name) return;
+    setGroups((prev) => [
+      ...prev,
+      {
+        tempId: newTempId(),
+        name,
+        selection_type: "single",
+        required: true,
+        options: [],
+      },
+    ]);
+    setNewGroupName("");
+  };
+
+  return (
+    <section className="mt-4 space-y-3 border-t pt-4">
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+        Opciones / variantes
+      </h3>
+
+      <div className="flex gap-2">
+        <Input
+          value={newGroupName}
+          onChange={(e) => setNewGroupName(e.target.value)}
+          placeholder='Nombre del grupo (ej: "Masa", "Salsa")'
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleAddGroup();
+            }
+          }}
+        />
+        <Button
+          type="button"
+          onClick={handleAddGroup}
+          disabled={!newGroupName.trim()}
+        >
+          <Plus className="h-4 w-4" />
+        </Button>
+      </div>
+
+      {groups.length === 0 ? (
+        <p className="rounded-md bg-gray-50 px-3 py-4 text-center text-sm text-gray-500">
+          Sin variantes todavía. Podés agregarlas ahora; se guardan junto con el
+          producto al pulsar &quot;Guardar producto&quot;.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {groups.map((group) => (
+            <DraftGroupCard key={group.tempId} group={group} setGroups={setGroups} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+interface DraftGroupCardProps {
+  group: DraftGroup;
+  setGroups: React.Dispatch<React.SetStateAction<DraftGroup[]>>;
+}
+
+function DraftGroupCard({ group, setGroups }: DraftGroupCardProps) {
+  const [newOptionName, setNewOptionName] = useState("");
+  const [newOptionPrice, setNewOptionPrice] = useState("0");
+
+  const updateGroup = (patch: Partial<DraftGroup>) => {
+    setGroups((prev) =>
+      prev.map((g) => (g.tempId === group.tempId ? { ...g, ...patch } : g))
+    );
+  };
+
+  const removeGroup = () => {
+    if (!confirm(`¿Quitar el grupo "${group.name}" y sus opciones del borrador?`))
+      return;
+    setGroups((prev) => prev.filter((g) => g.tempId !== group.tempId));
+  };
+
+  const handleAddOption = () => {
+    const name = newOptionName.trim();
+    if (!name) return;
+    const price = Number(newOptionPrice) || 0;
+    setGroups((prev) =>
+      prev.map((g) => {
+        if (g.tempId !== group.tempId) return g;
+        const isFirst = g.options.length === 0;
+        return {
+          ...g,
+          options: [
+            ...g.options,
+            {
+              tempId: newTempId(),
+              name,
+              price_delta: price,
+              is_default: isFirst,
+            },
+          ],
+        };
+      })
+    );
+    setNewOptionName("");
+    setNewOptionPrice("0");
+  };
+
+  return (
+    <div className="rounded-lg border bg-white p-3">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <GripVertical className="h-4 w-4 text-gray-300" />
+        <Input
+          value={group.name}
+          onChange={(e) => updateGroup({ name: e.target.value })}
+          className="h-8 min-w-[120px] flex-1"
+        />
+        <select
+          value={group.selection_type}
+          onChange={(e) => {
+            const next = e.target.value as OptionGroupSelectionType;
+            updateGroup({ selection_type: next });
+          }}
+          className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+        >
+          <option value="single">Uno solo</option>
+          <option value="multi">Varios</option>
+        </select>
+        <label className="flex items-center gap-1 text-xs">
+          <input
+            type="checkbox"
+            checked={group.required}
+            onChange={(e) => updateGroup({ required: e.target.checked })}
+          />
+          Obligatorio
+        </label>
+        <button
+          type="button"
+          onClick={removeGroup}
+          className="ml-auto rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-600"
+          aria-label="Quitar grupo"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="space-y-1.5">
+        {group.options.map((option) => (
+          <DraftOptionRow
+            key={option.tempId}
+            groupTempId={group.tempId}
+            option={option}
+            setGroups={setGroups}
+          />
+        ))}
+      </div>
+
+      <div className="mt-2 flex gap-2">
+        <Input
+          value={newOptionName}
+          onChange={(e) => setNewOptionName(e.target.value)}
+          placeholder="Nombre de la opción"
+          className="h-8"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleAddOption();
+            }
+          }}
+        />
+        <Input
+          type="number"
+          step="0.01"
+          value={newOptionPrice}
+          onChange={(e) => setNewOptionPrice(e.target.value)}
+          placeholder="Recargo"
+          className="h-8 w-24"
+        />
+        <Button
+          type="button"
+          size="sm"
+          onClick={handleAddOption}
+          disabled={!newOptionName.trim()}
+        >
+          <Plus className="h-3 w-3" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+interface DraftOptionRowProps {
+  groupTempId: string;
+  option: DraftOption;
+  setGroups: React.Dispatch<React.SetStateAction<DraftGroup[]>>;
+}
+
+function DraftOptionRow({
+  groupTempId,
+  option,
+  setGroups,
+}: DraftOptionRowProps) {
+  const [name, setName] = useState(option.name);
+  const [priceDelta, setPriceDelta] = useState(option.price_delta.toString());
+
+  useEffect(() => {
+    setName(option.name);
+    setPriceDelta(option.price_delta.toString());
+  }, [option.name, option.price_delta]);
+
+  const patchOption = (
+    updates: Partial<Pick<DraftOption, "name" | "price_delta" | "is_default">>
+  ) => {
+    setGroups((prev) =>
+      prev.map((g) => {
+        if (g.tempId !== groupTempId) return g;
+        let nextOptions = g.options.map((o) =>
+          o.tempId === option.tempId ? { ...o, ...updates } : o
+        );
+        if (updates.is_default === true) {
+          nextOptions = nextOptions.map((o) => ({
+            ...o,
+            is_default: o.tempId === option.tempId,
+          }));
+        }
+        return { ...g, options: nextOptions };
+      })
+    );
+  };
+
+  const remove = () => {
+    setGroups((prev) =>
+      prev.map((g) => {
+        if (g.tempId !== groupTempId) return g;
+        const filtered = g.options.filter((o) => o.tempId !== option.tempId);
+        if (filtered.length === 0) return { ...g, options: [] };
+        if (!filtered.some((o) => o.is_default)) {
+          return {
+            ...g,
+            options: filtered.map((o, i) => ({
+              ...o,
+              is_default: i === 0,
+            })),
+          };
+        }
+        return { ...g, options: filtered };
+      })
+    );
+  };
+
+  return (
+    <div className="flex items-center gap-2 rounded-md bg-gray-50 px-2 py-1">
+      <Input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={() => {
+          if (name !== option.name) patchOption({ name });
+        }}
+        className="h-7 flex-1 border-transparent bg-transparent"
+      />
+      <span className="text-xs text-gray-400">+</span>
+      <Input
+        type="number"
+        step="0.01"
+        value={priceDelta}
+        onChange={(e) => setPriceDelta(e.target.value)}
+        onBlur={() => {
+          const v = Number(priceDelta) || 0;
+          if (v !== option.price_delta) patchOption({ price_delta: v });
+        }}
+        className="h-7 w-20"
+      />
+      <label className="flex items-center gap-1 text-xs text-gray-500">
+        <input
+          type="checkbox"
+          checked={option.is_default}
+          onChange={(e) => {
+            if (e.target.checked) {
+              patchOption({ is_default: true });
+            } else {
+              setGroups((prev) =>
+                prev.map((g) => {
+                  if (g.tempId !== groupTempId) return g;
+                  const next = g.options.map((o) =>
+                    o.tempId === option.tempId
+                      ? { ...o, is_default: false }
+                      : o
+                  );
+                  if (!next.some((o) => o.is_default) && next.length > 0) {
+                    return {
+                      ...g,
+                      options: next.map((o, i) => ({
+                        ...o,
+                        is_default: i === 0,
+                      })),
+                    };
+                  }
+                  return { ...g, options: next };
+                })
+              );
+            }
+          }}
+        />
+        Default
+      </label>
+      <button
+        type="button"
+        onClick={remove}
+        className="rounded p-1 text-gray-400 hover:text-red-600"
+        aria-label="Quitar opción"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    </div>
   );
 }
 
@@ -608,8 +1255,8 @@ function OptionGroupCard({ group, onChange }: OptionGroupCardProps) {
       </div>
 
       <div className="space-y-1.5">
-        {(group.options ?? []).map((option) => (
-          <OptionRow key={option.id} option={option} onChange={onChange} />
+        {(group.options ?? []).map((opt) => (
+          <OptionRow key={opt.id} option={opt} onChange={onChange} />
         ))}
       </div>
 

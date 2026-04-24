@@ -46,7 +46,7 @@ src/
 │   │   ├── pack-builder.tsx      # Armador de packs dinámicos
 │   │   └── cash-close-ticket.tsx # Ticket de cierre de caja + preview
 │   ├── settings/
-│   │   ├── products-manager.tsx  # CRUD productos con opciones/variantes
+│   │   ├── products-manager.tsx  # CRUD productos: alta en un paso (variantes en borrador + guardado en cascada), combobox de categoría, duplicar copia inactiva, edición con sync inmediato a Supabase
 │   │   ├── promotions-manager.tsx # CRUD promociones
 │   │   └── dynamic-packs-manager.tsx # CRUD packs dinámicos
 │   ├── stats/
@@ -146,6 +146,14 @@ RLS habilitado con policies `to authenticated` en todas las tablas.
 - Comanda: items con cantidad grande, sin precios, con variantes
 - Ticket: detalle completo con precios, descuento, puntos, método de pago
 - Toast verde de confirmación siempre aparece (feedback independiente del print)
+
+### Configuración: productos (`settings` → `products-manager.tsx`)
+
+1. **Alta en un solo paso**: se pueden definir grupos y opciones de variantes en el mismo modal antes de guardar; al confirmar se crea el producto y luego los grupos y opciones en orden (cascada). Si falla la creación de variantes, el producto igual queda guardado y el modal pasa a edición para completarlas.
+2. **Categoría**: selector tipo combobox (búsqueda + lista de categorías ya usadas en otros productos + acción “Crear categoría”); al guardar se aplica `trim` y la primera letra en mayúsculas (locale `es`) para categorías nuevas o editadas desde el campo.
+3. **Duplicar** (solo al editar): crea un producto nuevo con nombre `… (copia)`, `active: false`, mismos precio/datos/grupos/opciones; el stock del nuevo ítem arranca con el valor por defecto de la base (típicamente 0) hasta ajustarlo en la sección Stock.
+4. **Layout del modal**: datos básicos visibles de entrada; variantes siempre visibles; descripción, puntos, stock y toggle “Activo” dentro de **Más opciones** (acordeón colapsable). En alta no se muestra “Activo”: las altas salen activas por defecto.
+5. **Edición de variantes**: el comportamiento previo se mantiene (cada cambio en grupos/opciones persiste al Supabase al agregar o al confirmar campos).
 
 ### Fidelización de clientes
 - Cada producto tiene `points` (configurable)
